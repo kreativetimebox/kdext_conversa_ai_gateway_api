@@ -37,7 +37,7 @@ def run_tests():
         response = client.get("/health")
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         assert response.json() == {"status": "ok"}, f"Expected status ok, got {response.json()}"
-        print("✓ GET /health passed.")
+        print("[OK] GET /health passed.")
 
         # 2. Signup
         print("Testing POST /signup...")
@@ -51,7 +51,7 @@ def run_tests():
         assert "api_key" in data, "api_key missing in signup response"
         assert data["email"] == "verify@example.com"
         api_key = data["api_key"]
-        print("✓ POST /signup passed.")
+        print("[OK] POST /signup passed.")
 
         # 3. Login
         print("Testing POST /login...")
@@ -65,7 +65,7 @@ def run_tests():
         assert "access_token" in login_data, "access_token missing in login response"
         assert login_data["api_key"] == api_key
         token = login_data["access_token"]
-        print("✓ POST /login passed.")
+        print("[OK] POST /login passed.")
 
         # 4. Profile
         print("Testing GET /profile...")
@@ -78,7 +78,7 @@ def run_tests():
         assert profile_data["email"] == "verify@example.com"
         assert profile_data["total_processing"] == 0
         assert profile_data["total_failed"] == 0
-        print("✓ GET /profile passed.")
+        print("[OK] GET /profile passed.")
 
         # 5. Speech to Text (STT) stub
         print("Testing POST /speech-to-text...")
@@ -90,7 +90,7 @@ def run_tests():
         stt_data = response.json()
         assert "request_id" in stt_data
         assert stt_data["detail"] == "Hello, welcome to the voice gateway."
-        print("✓ POST /speech-to-text (STT) passed.")
+        print("[OK] POST /speech-to-text (STT) passed.")
 
         # Verify that total_processing incremented
         response = client.get(
@@ -99,7 +99,7 @@ def run_tests():
         )
         profile_data = response.json()
         assert profile_data["total_processing"] == 1, f"Expected total_processing=1, got {profile_data['total_processing']}"
-        print("✓ Usage accounting checked.")
+        print("[OK] Usage accounting checked.")
 
         print("\nAll integration checks completed successfully!")
 
