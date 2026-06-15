@@ -46,10 +46,10 @@ flowchart LR
     Gateway -->|"multipart /v1/stt"| STT["STT Microservice<br/>optional"]
 ```
 
-The current Desktop TTS service is in:
+The TTS service is in:
 
 ```text
-/Users/taqaddusshafi/Desktop/tts
+https://github.com/kreativetimebox/kdext_conversa_ai_tts.git
 ```
 
 It exposes:
