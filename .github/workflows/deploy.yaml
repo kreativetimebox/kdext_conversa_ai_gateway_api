@@ -86,7 +86,7 @@ jobs:
           container_name="conversa-ai-gateway"
           image_name="kdext-conversa-ai-gateway:latest"
 
-          cd /opt/voice-gateway
+          cd /home/balabantaray-user/voice-gateway
 
           echo "Building Docker image..."
           docker build -t "$image_name" .
