@@ -15,7 +15,7 @@ env:
   SSH_PORT: "22"
   # Update these according to your server configuration
   SSH_USER: balabantaray-user
-  REMOTE_DIR: /opt/voice-gateway
+  REMOTE_DIR: /home/balabantaray-user/voice-gateway
   APP_PORT: "8001"
 
 jobs:
