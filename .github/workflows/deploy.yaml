@@ -99,7 +99,7 @@ jobs:
           docker run -d --name "$container_name" \
             --network host \
             --restart unless-stopped \
-            --env-file /opt/voice-gateway/.env \
+            --env-file /home/balabantaray-user/voice-gateway/.env \
             "$image_name"
 
           ready=false
