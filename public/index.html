@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Gateway — Demo Console</title>
+  <meta name="description" content="Interactive demo console for testing Text-to-Speech and Speech-to-Text engines." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-primary:    #0a0a0f;
+      --bg-secondary:  #111118;
+      --bg-card:       rgba(255,255,255,0.03);
+      --bg-glass:      rgba(255,255,255,0.05);
+      --border-glass:  rgba(255,255,255,0.08);
+      --text-primary:  #e8e8ed;
+      --text-secondary:#8b8b9a;
+      --text-muted:    #55556a;
+      --accent-tts:    #6c5ce7;
+      --accent-tts-glow: rgba(108,92,231,0.35);
+      --accent-stt:    #00cec9;
+      --accent-stt-glow: rgba(0,206,201,0.35);
+      --success:       #00b894;
+      --error:         #ff6b6b;
+      --warning:       #feca57;
+      --radius:        16px;
+      --radius-sm:     10px;
+      --radius-xs:     6px;
+      --transition:    0.25s cubic-bezier(.4,0,.2,1);
+    }
+
+    html { font-size: 15px; scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse 600px 400px at 20% 15%, rgba(108,92,231,0.08), transparent),
+        radial-gradient(ellipse 500px 350px at 80% 80%, rgba(0,206,201,0.06), transparent),
+        radial-gradient(ellipse 400px 300px at 50% 50%, rgba(108,92,231,0.03), transparent);
+      pointer-events: none; z-index: 0;
+      animation: bgPulse 12s ease-in-out infinite alternate;
+    }
+
+    @keyframes bgPulse { 0%{opacity:.7} 100%{opacity:1} }
+
+    .app { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+
+    /* ── Header ── */
+    .header { text-align: center; margin-bottom: 3rem; animation: fadeUp .6s ease-out both; }
+
+    .header__badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 16px; border-radius: 999px;
+      background: var(--bg-glass); border: 1px solid var(--border-glass);
+      font-size: .72rem; font-weight: 600; letter-spacing: 1.5px;
+      text-transform: uppercase; color: var(--text-muted);
+      margin-bottom: 1.2rem; backdrop-filter: blur(12px);
+    }
+
+    .header__badge .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--success); box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.85)} }
+
+    .header h1 {
+      font-size: 2.6rem; font-weight: 800; letter-spacing: -1px;
+      background: linear-gradient(135deg, #e8e8ed 30%, #6c5ce7 60%, #00cec9 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; line-height: 1.15;
+    }
+
+    .header p { margin-top: .6rem; color: var(--text-secondary); font-size: .95rem; }
+
+    /* ── Status Bar ── */
+    .status-bar {
+      display: flex; justify-content: center; gap: 1.5rem;
+      margin-bottom: 2.5rem; flex-wrap: wrap; animation: fadeUp .6s .1s ease-out both;
+    }
+
+    .status-chip {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 18px; border-radius: var(--radius-sm);
+      background: var(--bg-glass); border: 1px solid var(--border-glass);
+      font-size: .78rem; font-weight: 500; color: var(--text-secondary);
+      backdrop-filter: blur(8px); transition: var(--transition);
+    }
+
+    .status-chip .indicator {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-muted); transition: var(--transition);
+    }
+
+    .status-chip[data-status="ok"] .indicator { background: var(--success); box-shadow: 0 0 10px var(--success); }
+    .status-chip[data-status="error"] .indicator { background: var(--error); box-shadow: 0 0 10px var(--error); }
+    .status-chip[data-status="checking"] .indicator { background: var(--warning); animation: pulse 1s infinite; }
+
+    /* ── Grid ── */
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 768px) { .panels{grid-template-columns:1fr} .header h1{font-size:1.8rem} }
+
+    /* ── Card ── */
+    .panel {
+      background: var(--bg-card); border: 1px solid var(--border-glass);
+      border-radius: var(--radius); padding: 2rem;
+      backdrop-filter: blur(20px); position: relative; overflow: hidden;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+
+    .panel:hover { border-color: rgba(255,255,255,.12); }
+    .panel--tts { animation: fadeUp .6s .15s ease-out both; }
+    .panel--stt { animation: fadeUp .6s .25s ease-out both; }
+    .panel--tts:hover { box-shadow: 0 0 40px -10px var(--accent-tts-glow); }
+    .panel--stt:hover { box-shadow: 0 0 40px -10px var(--accent-stt-glow); }
+
+    .panel::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0;
+      height: 2px; border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .panel--tts::before { background: linear-gradient(90deg, var(--accent-tts), transparent 80%); }
+    .panel--stt::before { background: linear-gradient(90deg, var(--accent-stt), transparent 80%); }
+
+    .panel__header { display: flex; align-items: center; gap: 12px; margin-bottom: 1.5rem; }
+
+    .panel__icon {
+      width: 42px; height: 42px; border-radius: var(--radius-sm);
+      display: grid; place-items: center; font-size: 1.2rem; flex-shrink: 0;
+    }
+
+    .panel--tts .panel__icon { background: rgba(108,92,231,.12); color: var(--accent-tts); }
+    .panel--stt .panel__icon { background: rgba(0,206,201,.12); color: var(--accent-stt); }
+    .panel__title { font-size: 1.1rem; font-weight: 700; letter-spacing: -.3px; }
+    .panel__subtitle { font-size: .72rem; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 1px; }
+
+    /* ── Form ── */
+    label {
+      display: block; font-size: .75rem; font-weight: 600;
+      color: var(--text-secondary); margin-bottom: 6px;
+      text-transform: uppercase; letter-spacing: .8px;
+    }
+
+    textarea, select, input[type="text"] {
+      width: 100%; background: var(--bg-secondary);
+      border: 1px solid var(--border-glass); border-radius: var(--radius-xs);
+      color: var(--text-primary); font-family: inherit; font-size: .88rem;
+      padding: 12px 14px; outline: none; resize: vertical;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+
+    textarea:focus, select:focus, input[type="text"]:focus {
+      border-color: rgba(255,255,255,.2); box-shadow: 0 0 0 3px rgba(255,255,255,.04);
+    }
+
+    textarea { min-height: 110px; line-height: 1.6; }
+
+    select {
+      appearance: none; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b8b9a'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px;
+    }
+
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field { margin-bottom: 1rem; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 12px 28px; border: none; border-radius: var(--radius-xs);
+      font-family: inherit; font-size: .85rem; font-weight: 600;
+      cursor: pointer; transition: all var(--transition);
+      width: 100%; position: relative; overflow: hidden;
+    }
+
+    .btn:active { transform: scale(.97); }
+
+    .btn--tts {
+      background: linear-gradient(135deg, var(--accent-tts), #a29bfe);
+      color: #fff; box-shadow: 0 4px 20px var(--accent-tts-glow);
+    }
+
+    .btn--tts:hover { box-shadow: 0 6px 30px var(--accent-tts-glow); filter: brightness(1.08); }
+
+    .btn--stt {
+      background: linear-gradient(135deg, var(--accent-stt), #81ecec);
+      color: #0a0a0f; box-shadow: 0 4px 20px var(--accent-stt-glow);
+    }
+
+    .btn--stt:hover { box-shadow: 0 6px 30px var(--accent-stt-glow); filter: brightness(1.08); }
+
+    .btn--record {
+      background: rgba(255,107,107,.15); border: 1px solid rgba(255,107,107,.3); color: var(--error);
+    }
+
+    .btn--record:hover { background: rgba(255,107,107,.25); }
+    .btn--record.recording {
+      background: rgba(255,107,107,.3); border-color: var(--error);
+      animation: recPulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes recPulse {
+      0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,.4)} 50%{box-shadow:0 0 0 10px rgba(255,107,107,0)}
+    }
+
+    .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; transform: none; }
+
+    .btn .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+      border-radius: 50%; animation: spin .6s linear infinite; display: none;
+    }
+
+    .btn.loading .spinner { display: block; }
+    .btn.loading .btn-text { opacity: .6; }
+
+    @keyframes spin { to{transform:rotate(360deg)} }
+
+    /* ── Output ── */
+    .output {
+      margin-top: 1.5rem; padding: 1.2rem; border-radius: var(--radius-sm);
+      background: rgba(0,0,0,.3); border: 1px solid var(--border-glass);
+      min-height: 80px; display: none; animation: fadeIn .3s ease-out;
+    }
+
+    .output.visible { display: block; }
+
+    .output__label {
+      font-size: .68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 1.5px; margin-bottom: 10px;
+    }
+
+    .panel--tts .output__label { color: var(--accent-tts); }
+    .panel--stt .output__label { color: var(--accent-stt); }
+
+    .output__meta { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 10px; }
+
+    .meta-tag {
+      font-size: .72rem; color: var(--text-muted);
+      display: flex; align-items: center; gap: 4px;
+    }
+
+    .meta-tag span { color: var(--text-secondary); font-weight: 600; }
+
+    .audio-wrapper { margin-top: 8px; }
+    .audio-wrapper audio { width: 100%; height: 44px; border-radius: var(--radius-xs); outline: none; }
+
+    .transcript {
+      font-size: .92rem; line-height: 1.7; color: var(--text-primary);
+      padding: 10px 14px; background: var(--bg-secondary);
+      border-radius: var(--radius-xs); border: 1px solid var(--border-glass);
+      white-space: pre-wrap; word-break: break-word;
+    }
+
+    .error-msg {
+      color: var(--error); font-size: .82rem; font-weight: 500;
+      padding: 10px 14px; background: rgba(255,107,107,.08);
+      border: 1px solid rgba(255,107,107,.2); border-radius: var(--radius-xs);
+    }
+
+    /* ── Upload ── */
+    .upload-zone {
+      border: 2px dashed var(--border-glass); border-radius: var(--radius-sm);
+      padding: 1.5rem; text-align: center; cursor: pointer;
+      transition: all var(--transition); position: relative; background: transparent;
+    }
+
+    .upload-zone:hover { border-color: rgba(0,206,201,.3); background: rgba(0,206,201,.03); }
+    .upload-zone.has-file { border-color: var(--accent-stt); border-style: solid; background: rgba(0,206,201,.05); }
+
+    .upload-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .upload-zone__icon { font-size: 1.6rem; margin-bottom: 6px; }
+    .upload-zone__text { font-size: .82rem; color: var(--text-secondary); }
+    .upload-zone__hint { font-size: .7rem; color: var(--text-muted); margin-top: 4px; }
+    .upload-zone__filename { font-size: .82rem; color: var(--accent-stt); font-weight: 600; margin-top: 4px; }
+
+    .divider {
+      display: flex; align-items: center; gap: 12px; margin: 1.2rem 0;
+      color: var(--text-muted); font-size: .72rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 1.5px;
+    }
+
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border-glass); }
+
+    /* ── Waveform ── */
+    .waveform-container {
+      height: 60px; margin-top: 10px; display: none;
+      align-items: center; justify-content: center; gap: 3px; padding: 0 20px;
+    }
+
+    .waveform-container.active { display: flex; }
+
+    .wave-bar {
+      width: 3px; background: var(--accent-stt);
+      border-radius: 2px; transition: height .08s ease; min-height: 4px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center; margin-top: 3rem; padding-top: 2rem;
+      border-top: 1px solid var(--border-glass);
+      color: var(--text-muted); font-size: .75rem;
+      animation: fadeUp .6s .35s ease-out both;
+    }
+
+    .footer a {
+      color: var(--text-secondary); text-decoration: none;
+      font-weight: 600; transition: color var(--transition);
+    }
+
+    .footer a:hover { color: var(--accent-tts); }
+
+    @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header__badge"><span class="dot"></span> Live Console</div>
+      <h1>Voice Gateway</h1>
+      <p>Test your TTS &amp; STT engines interactively</p>
+    </header>
+
+    <div class="status-bar">
+      <div class="status-chip" id="statusTts" data-status="checking">
+        <span class="indicator"></span> TTS Engine
+      </div>
+      <div class="status-chip" id="statusStt" data-status="checking">
+        <span class="indicator"></span> STT Engine
+      </div>
+    </div>
+
+    <div class="panels">
+      <!-- ── TTS ── -->
+      <section class="panel panel--tts">
+        <div class="panel__header">
+          <div class="panel__icon">🔊</div>
+          <div>
+            <div class="panel__title">Text to Speech</div>
+            <div class="panel__subtitle">Generate audio from text</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="ttsText">Input Text</label>
+          <textarea id="ttsText" placeholder="Enter text to synthesize…">Hello, welcome to the Voice Gateway demo. This system converts text into natural sounding speech.</textarea>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label for="ttsLang">Language</label>
+            <select id="ttsLang">
+              <option value="en" selected>English</option>
+              <option value="hi">Hindi</option>
+              <option value="ar">Arabic</option>
+              <option value="ur">Urdu</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="zh">Chinese</option>
+              <option value="ru">Russian</option>
+              <option value="pt">Portuguese</option>
+              <option value="bn">Bengali</option>
+              <option value="ta">Tamil</option>
+              <option value="te">Telugu</option>
+              <option value="ml">Malayalam</option>
+              <option value="mr">Marathi</option>
+              <option value="gu">Gujarati</option>
+              <option value="kn">Kannada</option>
+              <option value="pa">Punjabi</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ttsVoice">Voice</label>
+            <input type="text" id="ttsVoice" value="en-US-female-1" placeholder="e.g. en-US-female-1" />
+          </div>
+        </div>
+
+        <button class="btn btn--tts" id="btnTts" onclick="handleTTS()">
+          <span class="spinner"></span>
+          <span class="btn-text">✦ Synthesize Speech</span>
+        </button>
+
+        <div class="output" id="ttsOutput">
+          <div class="output__label">Output</div>
+          <div id="ttsResult"></div>
+          <div class="output__meta" id="ttsMeta"></div>
+        </div>
+      </section>
+
+      <!-- ── STT ── -->
+      <section class="panel panel--stt">
+        <div class="panel__header">
+          <div class="panel__icon">🎙️</div>
+          <div>
+            <div class="panel__title">Speech to Text</div>
+            <div class="panel__subtitle">Transcribe audio to text</div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Record from Microphone</label>
+          <button class="btn btn--record" id="btnRecord" onclick="toggleRecording()">
+            <span id="recordIcon">⏺</span>
+            <span id="recordText">Start Recording</span>
+          </button>
+          <div class="waveform-container" id="waveform"></div>
+        </div>
+
+        <div class="divider">or</div>
+
+        <div class="field">
+          <label>Upload Audio File</label>
+          <div class="upload-zone" id="uploadZone">
+            <input type="file" id="sttFile" accept="audio/*" onchange="handleFileSelect(this)" />
+            <div class="upload-zone__icon">📁</div>
+            <div class="upload-zone__text">Drop file or click to browse</div>
+            <div class="upload-zone__hint">WAV, MP3, OGG, WebM • Max 25 MB</div>
+            <div class="upload-zone__filename" id="fileName"></div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label for="sttLang">Language (optional)</label>
+            <select id="sttLang">
+              <option value="" selected>Auto-detect</option>
+              <option value="en">English</option>
+              <option value="hi">Hindi</option>
+              <option value="ar">Arabic</option>
+              <option value="ur">Urdu</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+            </select>
+          </div>
+          <div class="field" style="display:flex;align-items:flex-end;">
+            <button class="btn btn--stt" id="btnStt" onclick="handleSTT()">
+              <span class="spinner"></span>
+              <span class="btn-text">⚡ Transcribe</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="output" id="sttOutput">
+          <div class="output__label">Transcript</div>
+          <div id="sttResult"></div>
+          <div class="output__meta" id="sttMeta"></div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      Voice Gateway Demo Console &middot;
+      <a href="/api/health" target="_blank">API Health</a> &middot;
+      <a href="/api/engine-health" target="_blank">Engine Health</a>
+    </footer>
+  </div>
+
+  <script>
+    const API = '';
+    let mediaRecorder = null, audioChunks = [], recordedBlob = null;
+    let isRecording = false, audioContext = null, analyser = null, animFrameId = null;
+
+    /* ── Auto-sync voice when language changes ── */
+    const LANG_VOICE_MAP = {
+      en:'en-US-female-1', hi:'hi-IN-female-1', ar:'ar-SA-female-1', ur:'ur-PK-female-1',
+      es:'es-ES-female-1', fr:'fr-FR-female-1', de:'de-DE-female-1', ja:'ja-JP-female-1',
+      ko:'ko-KR-female-1', zh:'zh-CN-female-1', ru:'ru-RU-female-1', pt:'pt-BR-female-1',
+      bn:'bn-IN-female-1', ta:'ta-IN-female-1', te:'te-IN-female-1', ml:'ml-IN-female-1',
+      mr:'mr-IN-female-1', gu:'gu-IN-female-1', kn:'kn-IN-female-1', pa:'pa-IN-female-1',
+    };
+
+    document.getElementById('ttsLang').addEventListener('change', function() {
+      const voice = LANG_VOICE_MAP[this.value] || `${this.value}-female-1`;
+      document.getElementById('ttsVoice').value = voice;
+    });
+
+    async function checkHealth() {
+      try {
+        const resp = await fetch(`${API}/api/engine-health`);
+        const data = await resp.json();
+        for (const [key, val] of Object.entries(data)) {
+          const el = document.getElementById(`status${key.charAt(0).toUpperCase() + key.slice(1)}`);
+          if (el) el.dataset.status = val.status === 'ok' ? 'ok' : 'error';
+        }
+      } catch {
+        document.getElementById('statusTts').dataset.status = 'error';
+        document.getElementById('statusStt').dataset.status = 'error';
+      }
+    }
+
+    checkHealth();
+    setInterval(checkHealth, 30000);
+
+    async function handleTTS() {
+      const text = document.getElementById('ttsText').value.trim();
+      if (!text) return;
+
+      const btn = document.getElementById('btnTts');
+      const output = document.getElementById('ttsOutput');
+      const result = document.getElementById('ttsResult');
+      const meta = document.getElementById('ttsMeta');
+
+      btn.classList.add('loading'); btn.disabled = true;
+      output.classList.remove('visible');
+
+      const formData = new FormData();
+      formData.append('text', text);
+      formData.append('language', document.getElementById('ttsLang').value);
+      formData.append('voice', document.getElementById('ttsVoice').value);
+
+      const start = performance.now();
+
+      try {
+        const resp = await fetch(`${API}/api/tts`, { method: 'POST', body: formData });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const blob = await resp.blob();
+        const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+        const url = URL.createObjectURL(blob);
+
+        result.innerHTML = `<div class="audio-wrapper"><audio controls autoplay src="${url}"></audio></div>`;
+        meta.innerHTML = `
+          <div class="meta-tag">⏱ <span>${elapsed}s</span></div>
+          <div class="meta-tag">📦 <span>${(blob.size / 1024).toFixed(1)} KB</span></div>
+          <div class="meta-tag">🎵 <span>${blob.type || 'audio/wav'}</span></div>`;
+        output.classList.add('visible');
+      } catch (err) {
+        result.innerHTML = `<div class="error-msg">✕ ${err.message}</div>`;
+        meta.innerHTML = '';
+        output.classList.add('visible');
+      } finally {
+        btn.classList.remove('loading'); btn.disabled = false;
+      }
+    }
+
+    async function handleSTT() {
+      const fileInput = document.getElementById('sttFile');
+      const file = fileInput.files[0] || recordedBlob;
+      if (!file) { alert('Please record audio or upload a file first.'); return; }
+
+      const btn = document.getElementById('btnStt');
+      const output = document.getElementById('sttOutput');
+      const result = document.getElementById('sttResult');
+      const meta = document.getElementById('sttMeta');
+
+      btn.classList.add('loading'); btn.disabled = true;
+      output.classList.remove('visible');
+
+      const formData = new FormData();
+      /* Strip codec from type: 'audio/webm;codecs=opus' → 'audio/webm' */
+      const cleanType = (file.type || 'audio/webm').split(';')[0];
+      if (file instanceof Blob && !(file instanceof File)) {
+        formData.append('file', new File([file], 'recording.webm', { type: cleanType }));
+      } else {
+        formData.append('file', file);
+      }
+      const lang = document.getElementById('sttLang').value;
+      if (lang) formData.append('language', lang);
+
+      const start = performance.now();
+
+      try {
+        const resp = await fetch(`${API}/api/stt`, { method: 'POST', body: formData });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+        const transcript = data.text || data.detail || data.transcript || data.transcription || JSON.stringify(data);
+
+        result.innerHTML = `<div class="transcript">${escapeHtml(transcript)}</div>`;
+        meta.innerHTML = `
+          <div class="meta-tag">⏱ <span>${elapsed}s</span></div>
+          <div class="meta-tag">📄 <span>${transcript.split(/\s+/).length} words</span></div>`;
+        output.classList.add('visible');
+      } catch (err) {
+        result.innerHTML = `<div class="error-msg">✕ ${err.message}</div>`;
+        meta.innerHTML = '';
+        output.classList.add('visible');
+      } finally {
+        btn.classList.remove('loading'); btn.disabled = false;
+      }
+    }
+
+    async function toggleRecording() { isRecording ? stopRecording() : await startRecording(); }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        setupWaveform();
+
+        mediaRecorder = new MediaRecorder(stream, { mimeType: getBestMimeType() });
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+          recordedBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+          stream.getTracks().forEach(t => t.stop());
+          if (audioContext) { audioContext.close(); audioContext = null; }
+          document.getElementById('uploadZone').classList.add('has-file');
+          document.getElementById('fileName').textContent =
+            `🎤 Recording — ${(recordedBlob.size / (1024 * 1024)).toFixed(2)} MB`;
+        };
+
+        mediaRecorder.start(250);
+        isRecording = true;
+        document.getElementById('btnRecord').classList.add('recording');
+        document.getElementById('recordIcon').textContent = '⏹';
+        document.getElementById('recordText').textContent = 'Stop Recording';
+      } catch (err) { alert('Microphone access denied.\n' + err.message); }
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      isRecording = false;
+      cancelAnimationFrame(animFrameId);
+      document.getElementById('waveform').classList.remove('active');
+      document.getElementById('btnRecord').classList.remove('recording');
+      document.getElementById('recordIcon').textContent = '⏺';
+      document.getElementById('recordText').textContent = 'Start Recording';
+    }
+
+    function getBestMimeType() {
+      for (const t of ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'])
+        if (MediaRecorder.isTypeSupported(t)) return t;
+      return '';
+    }
+
+    function setupWaveform() {
+      const c = document.getElementById('waveform');
+      c.innerHTML = '';
+      for (let i = 0; i < 32; i++) { const b = document.createElement('div'); b.className = 'wave-bar'; b.style.height = '4px'; c.appendChild(b); }
+      c.classList.add('active');
+      drawWaveform();
+    }
+
+    function drawWaveform() {
+      if (!analyser) return;
+      const bars = document.querySelectorAll('.wave-bar');
+      const d = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(d);
+      bars.forEach((bar, i) => { bar.style.height = `${Math.max(4, (d[i] || 0) / 255 * 55)}px`; });
+      animFrameId = requestAnimationFrame(drawWaveform);
+    }
+
+    function handleFileSelect(input) {
+      const zone = document.getElementById('uploadZone');
+      const nameEl = document.getElementById('fileName');
+      if (input.files.length) {
+        const f = input.files[0];
+        zone.classList.add('has-file');
+        nameEl.textContent = `${f.name} — ${(f.size / (1024 * 1024)).toFixed(2)} MB`;
+        recordedBlob = null;
+      } else { zone.classList.remove('has-file'); nameEl.textContent = ''; }
+    }
+
+    function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    document.getElementById('ttsText').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); handleTTS(); }
+    });
+  </script>
+</body>
+</html>

@@ -7,11 +7,36 @@ from app.core.dependencies import verify_api_key
 from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.schemas.tts import TTSRequest
-from app.services.tts_service import synthesize
+from app.services.tts_service import synthesize, SPEAKERS
 from app.storage.audio_store import save_audio
 from app.services.usage import increment_success, increment_failure
 
 router = APIRouter(tags=["tts"])
+
+
+@router.get("/voices")
+async def list_voices():
+    """Return all available TTS speaker voices.
+
+    Use the speaker name (e.g. 'rohit', 'divya') as the `voice` field
+    in your POST /text-to-speech request.  Optionally prefix with a language
+    code: 'hi-rohit' routes to Hindi Indic-Parler with Rohit's voice.
+    """
+    return {
+        "voices": [
+            {
+                "id": name,
+                "name": name.capitalize(),
+                "gender": info["gender"],
+                "style": info["style"],
+                "language": info["language"],
+                "example_voice_id": name,
+            }
+            for name, info in SPEAKERS.items()
+        ],
+        "usage": "Pass the voice 'id' as the `voice` field in POST /text-to-speech",
+        "example": {"text": "नमस्ते, मैं रोहित हूँ।", "voice": "rohit"},
+    }
 
 
 @router.post("/text-to-speech")
@@ -47,3 +72,4 @@ async def text_to_speech(body: TTSRequest,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Engine failure: {str(exc)}"
         )
+

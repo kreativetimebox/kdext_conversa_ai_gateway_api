@@ -13,7 +13,15 @@ class TTSRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1, description="Text to synthesize")
-    voice: str = Field(default="en-US-female-1", max_length=256, description="Voice identifier")
+    voice: str = Field(
+        default="divya",
+        max_length=256,
+        description=(
+            "Speaker name (e.g. 'rohit', 'divya', 'sita', 'arjun'). "
+            "See GET /voices for the full list. "
+            "Optionally prefix with a language code: 'hi-rohit'."
+        ),
+    )
     format: str = Field(default="wav", min_length=2, max_length=16, description="Output audio format")
 
     @field_validator("text")
@@ -33,6 +41,7 @@ class TTSRequest(BaseModel):
             allowed_list = ", ".join(sorted(allowed))
             raise ValueError(f"Unsupported audio format. Allowed formats: {allowed_list}")
         return requested
+
 
 
 class TTSResponse(BaseModel):

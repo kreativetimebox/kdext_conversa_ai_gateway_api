@@ -17,4 +17,7 @@ alembic==1.14.1
 
 structlog==24.4.0
 
+# AWS S3 for audio file storage
+boto3==1.35.0
+
 pytest==8.3.4

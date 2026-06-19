@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     stt_engine_path: str = "/v1/stt"
     engine_timeout_seconds: float = 60.0
 
-    # Audio storage
+    # Audio storage — local fallback
     audio_storage_dir: str = "audio_storage"
     max_audio_upload_bytes: int = 25 * 1024 * 1024
     allowed_audio_content_types: list[str] = [
@@ -55,6 +55,13 @@ class Settings(BaseSettings):
         "audio/webm",
         "audio/ogg",
     ]
+
+    # AWS S3 — set USE_S3_STORAGE=true to enable cloud audio storage
+    use_s3_storage: bool = False
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_s3_bucket: str | None = None
+    aws_s3_region: str = "us-east-1"
 
     @field_validator(
         "allowed_origins",
@@ -79,6 +86,30 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("aws_access_key_id", "aws_secret_access_key", "aws_s3_bucket", mode="before")
+    @classmethod
+    def empty_aws_str_is_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def validate_s3_settings(self) -> "Settings":
+        if self.use_s3_storage:
+            missing = [
+                name for name, val in [
+                    ("AWS_ACCESS_KEY_ID", self.aws_access_key_id),
+                    ("AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
+                    ("AWS_S3_BUCKET", self.aws_s3_bucket),
+                ]
+                if not val
+            ]
+            if missing:
+                raise ValueError(
+                    f"USE_S3_STORAGE=true requires these env vars: {', '.join(missing)}"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
