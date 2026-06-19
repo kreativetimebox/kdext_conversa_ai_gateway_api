@@ -45,6 +45,36 @@ jobs:
             . | ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$HOST" \
                 "tar xzf - -C $REMOTE_DIR"
 
+      - name: Write .env file on server
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_EXPIRES: ${{ secrets.JWT_EXPIRES }}
+          ENVIRONMENT: ${{ secrets.ENVIRONMENT }}
+          LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
+          CREATE_DB_TABLES: ${{ secrets.CREATE_DB_TABLES }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_S3_REGION: ${{ secrets.AWS_S3_REGION }}
+          STT_ENGINE_URL: ${{ secrets.STT_ENGINE_URL }}
+          TTS_ENGINE_URL: ${{ secrets.TTS_ENGINE_URL }}
+        run: |
+          HOST="${{ secrets.SERVER_HOST }}"
+          printf '%s\n' \
+            "DATABASE_URL=${DATABASE_URL}" \
+            "JWT_SECRET=${JWT_SECRET}" \
+            "JWT_EXPIRES=${JWT_EXPIRES}" \
+            "ENVIRONMENT=${ENVIRONMENT}" \
+            "LOG_LEVEL=${LOG_LEVEL}" \
+            "CREATE_DB_TABLES=${CREATE_DB_TABLES}" \
+            "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" \
+            "AWS_S3_BUCKET=${AWS_S3_BUCKET}" \
+            "AWS_S3_REGION=${AWS_S3_REGION}" \
+            "STT_ENGINE_URL=${STT_ENGINE_URL}" \
+            "TTS_ENGINE_URL=${TTS_ENGINE_URL}" \
+          | ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$HOST" \
+              "cat > $REMOTE_DIR/.env && chmod 600 $REMOTE_DIR/.env"
+
       - name: Build & restart
         run: |
           HOST="${{ secrets.SERVER_HOST }}"
@@ -52,28 +82,39 @@ jobs:
             -o ServerAliveInterval=60 -o ServerAliveCountMax=30 -T \
             "$SSH_USER@$HOST" "bash -s" << 'SCRIPT'
           set -euo pipefail
-          
-          # Use the REMOTE_DIR environment variable
+
+          container_name="conversa-ai-gateway"
+          image_name="kdext-conversa-ai-gateway:latest"
+
           cd /opt/voice-gateway
 
-          # Voice Gateway uses Docker Compose per DEPLOYMENT.md
-          echo "Building and starting Voice Gateway via Docker Compose..."
-          docker compose up -d --build
+          echo "Building Docker image..."
+          docker build -t "$image_name" .
 
-          # Verify it comes online
+          echo "Stopping old container (if running)..."
+          docker stop "$container_name" 2>/dev/null || true
+          docker rm   "$container_name" 2>/dev/null || true
+
+          echo "Starting container..."
+          docker run -d --name "$container_name" \
+            --network host \
+            --restart unless-stopped \
+            --env-file /opt/voice-gateway/.env \
+            "$image_name"
+
           ready=false
           for i in $(seq 1 30); do
             if curl -fs http://localhost:8001/health; then
-              echo "✅ Voice Gateway service is healthy"
+              echo "Service is healthy"
               ready=true
               break
             fi
             sleep 5
           done
-          
+
           if [ "$ready" = false ]; then
-            echo "❌ Voice Gateway service did not become ready"
-            docker compose logs --tail 80 || true
+            echo "Service did not become ready"
+            docker logs "$container_name" --tail 80 || true
             exit 1
           fi
           SCRIPT
