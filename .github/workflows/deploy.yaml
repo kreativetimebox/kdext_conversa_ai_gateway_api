@@ -14,7 +14,7 @@ concurrency:
 env:
   SSH_PORT: "22"
   # Update these according to your server configuration
-  SSH_USER: root
+  SSH_USER: balabantaray-user
   REMOTE_DIR: /opt/voice-gateway
   APP_PORT: "8001"
 
