@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     aws_s3_bucket: str | None = None
     aws_s3_region: str = "us-east-1"
 
+    # Amazon SQS — async job queue (voice-worker microservice)
+    use_async_queue: bool = False
+    aws_sqs_region: str = "ap-southeast-2"
+    aws_sqs_tts_queue_url: str | None = None
+    aws_sqs_stt_queue_url: str | None = None
+
     @field_validator(
         "allowed_origins",
         "tts_allowed_formats",
@@ -93,7 +99,11 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("aws_access_key_id", "aws_secret_access_key", "aws_s3_bucket", mode="before")
+    @field_validator(
+        "aws_access_key_id", "aws_secret_access_key", "aws_s3_bucket",
+        "aws_sqs_tts_queue_url", "aws_sqs_stt_queue_url",
+        mode="before",
+    )
     @classmethod
     def empty_aws_str_is_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
@@ -114,6 +124,24 @@ class Settings(BaseSettings):
             if missing:
                 raise ValueError(
                     f"USE_S3_STORAGE=true requires these env vars: {', '.join(missing)}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sqs_settings(self) -> "Settings":
+        if self.use_async_queue:
+            missing = [
+                name for name, val in [
+                    ("AWS_SQS_TTS_QUEUE_URL", self.aws_sqs_tts_queue_url),
+                    ("AWS_SQS_STT_QUEUE_URL", self.aws_sqs_stt_queue_url),
+                    ("AWS_ACCESS_KEY_ID", self.aws_access_key_id),
+                    ("AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key),
+                ]
+                if not val
+            ]
+            if missing:
+                raise ValueError(
+                    f"USE_ASYNC_QUEUE=true requires these env vars: {', '.join(missing)}"
                 )
         return self
 

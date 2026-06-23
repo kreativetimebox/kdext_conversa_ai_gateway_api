@@ -18,6 +18,7 @@ settings = get_settings()
 @router.post("/speech-to-text")
 async def speech_to_text(file: UploadFile = File(...),
                          language: str | None = Form(default=None),
+                         webhook_url: str | None = Form(default=None),
                          user: User = Depends(verify_api_key),
                          db: Session = Depends(get_db)):
     data = await file.read()
@@ -33,13 +34,59 @@ async def speech_to_text(file: UploadFile = File(...),
             detail="Unsupported audio media type"
         )
 
+    # Save incoming audio file (needed for both sync and async)
+    filename = file.filename or "upload.wav"
+
+    # ── Async mode: upload audio to S3, queue the job ──
+    if settings.use_async_queue:
+        from app.services.sqs_client import send_job
+
+        # Compute queue position (number of currently queued jobs + 1)
+        queue_pos = db.query(SpeechToText).filter(SpeechToText.status == "queued").count() + 1
+
+        job = SpeechToText(
+            audio="",
+            user_id=user.user_id,
+            status="queued",
+            language=language,
+            webhook_url=webhook_url,
+            queue_position=queue_pos,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        # Upload audio to S3 so the worker can access it
+        audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
+        job.audio = audio_url
+        db.commit()
+
+        send_job(
+            queue_url=settings.aws_sqs_stt_queue_url,
+            job_id=job.request_id,
+            job_type="stt",
+            payload={
+                "audio_url": audio_url,
+                "filename": filename,
+                "content_type": content_type,
+                "language": language,
+                "user_id": user.user_id,
+                "webhook_url": webhook_url,
+            },
+        )
+        return {
+            "job_id": job.request_id,
+            "status": "queued",
+            "queue_position": queue_pos,
+            "message": "Job submitted. Poll GET /jobs/{job_id} for status.",
+        }
+
+    # ── Sync mode: process immediately (original behavior) ──
     job = SpeechToText(audio="", user_id=user.user_id)
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    # Save incoming audio file
-    filename = file.filename or "upload.wav"
     audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
     job.audio = audio_url
     db.commit()
