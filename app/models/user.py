@@ -1,6 +1,6 @@
 """User ORM model — `users` table."""
 
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime,Boolean
 
 from app.database import Base
 
@@ -16,3 +16,4 @@ class User(Base):
     signout_time = Column(DateTime, nullable=True)
     total_processing = Column(Integer, default=0, nullable=False)
     total_failed = Column(Integer, default=0, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)

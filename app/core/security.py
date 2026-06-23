@@ -28,3 +28,8 @@ def create_access_token(user_id: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(seconds=settings.jwt_expires)
     payload = {"sub": str(user_id), "exp": expire.timestamp()}
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+import random
+
+def generate_otp() -> str:
+    """Generate a 6-digit OTP."""
+    return str(random.randint(100000, 999999))
