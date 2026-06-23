@@ -8,7 +8,7 @@ from app.core.dependencies import verify_api_key
 from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.models.stt import SpeechToText
-from app.schemas.job import JobStatusResponse
+from app.schemas.jobs import JobStatusResponse
 
 router = APIRouter(tags=["jobs"])
 
