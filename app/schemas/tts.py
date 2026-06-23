@@ -23,6 +23,11 @@ class TTSRequest(BaseModel):
         ),
     )
     format: str = Field(default="wav", min_length=2, max_length=16, description="Output audio format")
+    webhook_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="Optional URL to receive a POST callback when the job completes or fails.",
+    )
 
     @field_validator("text")
     @classmethod

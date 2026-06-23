@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from app.database import Base, engine
-from app.routers import auth, profile, tts, stt
+from app.routers import auth, profile, tts, stt, jobs
 from app.config import get_settings
 from app.core.logging import configure_logging
 
@@ -37,6 +37,7 @@ app.include_router(auth.router)
 app.include_router(profile.router)
 app.include_router(tts.router)
 app.include_router(stt.router)
+app.include_router(jobs.router)
 
 # Demo router — unauthenticated proxy endpoints for testing.
 # Set DISABLE_DEMO=true in production to remove /demo/* routes entirely.
