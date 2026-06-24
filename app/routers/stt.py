@@ -10,6 +10,7 @@ from app.models.stt import SpeechToText
 from app.services.stt_service import transcribe
 from app.storage.audio_store import save_audio
 from app.services.usage import increment_success, increment_failure
+from app.services.rate_limiter import check_rate_limit
 
 router = APIRouter(tags=["stt"])
 settings = get_settings()
@@ -80,9 +81,10 @@ async def speech_to_text(file: UploadFile = File(...),
             "queue_position": queue_pos,
             "message": "Job submitted. Poll GET /jobs/{job_id} for status.",
         }
-
+    check_rate_limit(user.user_id, "stt", db)
     # ── Sync mode: process immediately (original behavior) ──
     job = SpeechToText(audio="", user_id=user.user_id)
+    
     db.add(job)
     db.commit()
     db.refresh(job)

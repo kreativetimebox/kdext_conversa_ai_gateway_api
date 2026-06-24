@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from app.database import Base, engine
+from app.models import rate_limit  # noqa: F401 — registers table
 from app.routers import auth, profile, tts, stt, jobs
 from app.config import get_settings
 from app.core.logging import configure_logging
