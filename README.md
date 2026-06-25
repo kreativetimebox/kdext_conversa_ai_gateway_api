@@ -177,10 +177,12 @@ voice-gateway/
 | `GET` | `/health` | none | Process health check |
 | `GET` | `/ready` | none | Database readiness check |
 | `POST` | `/signup` | none | Create account and issue API key |
+| `POST` | `/verify-otp` | none | Verify email with OTP after signup |
 | `POST` | `/login` | none | Authenticate and issue JWT |
 | `GET` | `/profile` | JWT bearer token | Return user profile and usage stats |
 | `POST` | `/text-to-speech` | `X-API-Key` | Proxy TTS request and save generated audio |
 | `POST` | `/speech-to-text` | `X-API-Key` | Upload audio and transcribe through STT service or stub |
+
 
 ### Example: Signup
 
@@ -317,6 +319,9 @@ Production uses PostgreSQL. Local development can use SQLite.
 erDiagram
     users ||--o{ text_to_speech : owns
     users ||--o{ speech_to_text : owns
+    users ||--o{ otp_verifications : owns
+    users ||--o{ rate_limits : owns
+    users ||--o{ error_logs : owns
 
     users {
         integer user_id PK
@@ -327,6 +332,8 @@ erDiagram
         timestamp signout_time
         integer total_processing
         integer total_failed
+        boolean is_verified
+        timestamp created_at
     }
 
     text_to_speech {
@@ -347,6 +354,36 @@ erDiagram
         timestamp current_time
         timestamp updating_time
         float processing_time
+    }
+    otp_verifications {
+        integer id PK
+        integer user_id FK
+        varchar otp_code
+        varchar purpose
+        boolean is_used
+        timestamp expires_at
+        timestamp created_at
+    }
+
+    rate_limits {
+        integer id PK
+        integer user_id FK
+        varchar endpoint
+        varchar window_minute
+        varchar window_day
+        integer rpm_count
+        integer rpd_count
+    }
+
+    error_logs {
+        integer id PK
+        integer user_id FK
+        varchar endpoint
+        varchar method
+        varchar error_type
+        integer status_code
+        text error_message
+        timestamp created_at
     }
 ```
 
@@ -379,6 +416,12 @@ Counters:
 | `STT_ENGINE_PATH` | `/v1/stt` | Keep aligned with STT service |
 | `AUDIO_STORAGE_DIR` | `audio_storage` | Use durable disk or S3 replacement |
 | `MAX_AUDIO_UPLOAD_BYTES` | `5242880` | 5 MB upload limit |
+| `SMTP_HOST` | `smtp.gmail.com` | Gmail SMTP host |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USER` | empty | Gmail address for sending OTP emails |
+| `SMTP_PASSWORD` | empty | Gmail app password |
+| `EMAIL_FROM` | `noreply@kdext.ai` | Sender address in OTP emails |
+| `OTP_EXPIRES_MINUTES` | `10` | OTP validity window in minutes |
 
 Copy the template:
 
@@ -502,6 +545,9 @@ Current coverage includes:
 - unsupported STT media type rejection
 - audio filename sanitization
 - path traversal rejection
+- OTP verification flow (signup → verify-otp → login)
+- rate limiting (RPM and RPD per user per endpoint)
+- error logging to database
 
 ## Common Developer Tasks
 
