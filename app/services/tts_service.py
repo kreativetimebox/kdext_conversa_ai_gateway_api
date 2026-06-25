@@ -32,7 +32,7 @@ SUPPORTED_LANGS = {
 # ---------------------------------------------------------------------------
 
 SPEAKERS: dict[str, dict] = {
-    # ── Female speakers ──────────────────────────────────────────────────────
+    # ── Indic-Parler speakers ────────────────────────────────────────────────
     "divya": {
         "description": (
             "Divya's voice is monotone yet slightly fast in delivery, "
@@ -41,6 +41,7 @@ SPEAKERS: dict[str, dict] = {
         "gender": "female",
         "language": "multilingual",
         "style": "Monotone, fast",
+        "model": "indic_parler",
     },
     "sita": {
         "description": (
@@ -50,6 +51,7 @@ SPEAKERS: dict[str, dict] = {
         "gender": "female",
         "language": "multilingual",
         "style": "Calm, slow",
+        "model": "indic_parler",
     },
     "meera": {
         "description": (
@@ -59,6 +61,7 @@ SPEAKERS: dict[str, dict] = {
         "gender": "female",
         "language": "multilingual",
         "style": "Expressive, warm",
+        "model": "indic_parler",
     },
     "priya": {
         "description": (
@@ -68,8 +71,8 @@ SPEAKERS: dict[str, dict] = {
         "gender": "female",
         "language": "multilingual",
         "style": "Clear, professional",
+        "model": "indic_parler",
     },
-    # ── Male speakers ────────────────────────────────────────────────────────
     "rohit": {
         "description": (
             "Rohit's voice is calm and neutral with a moderate pace, "
@@ -78,6 +81,7 @@ SPEAKERS: dict[str, dict] = {
         "gender": "male",
         "language": "multilingual",
         "style": "Calm, neutral",
+        "model": "indic_parler",
     },
     "arjun": {
         "description": (
@@ -87,6 +91,7 @@ SPEAKERS: dict[str, dict] = {
         "gender": "male",
         "language": "multilingual",
         "style": "Deep, slow",
+        "model": "indic_parler",
     },
     "vikram": {
         "description": (
@@ -96,6 +101,7 @@ SPEAKERS: dict[str, dict] = {
         "gender": "male",
         "language": "multilingual",
         "style": "Confident, expressive",
+        "model": "indic_parler",
     },
     "amir": {
         "description": (
@@ -105,6 +111,36 @@ SPEAKERS: dict[str, dict] = {
         "gender": "male",
         "language": "multilingual",
         "style": "Clear, slightly fast",
+        "model": "indic_parler",
+    },
+    # ── Bark speakers ────────────────────────────────────────────────────────
+    "en_speaker_6": {
+        "description": "v2/en_speaker_6",
+        "gender": "female",
+        "language": "english",
+        "style": "Clear, neutral (Bark)",
+        "model": "bark",
+    },
+    "en_speaker_9": {
+        "description": "v2/en_speaker_9",
+        "gender": "female",
+        "language": "english",
+        "style": "Clear, expressive (Bark)",
+        "model": "bark",
+    },
+    "en_speaker_3": {
+        "description": "v2/en_speaker_3",
+        "gender": "female",
+        "language": "english",
+        "style": "Soft, warm (Bark)",
+        "model": "bark",
+    },
+    "en_speaker_1": {
+        "description": "v2/en_speaker_1",
+        "gender": "male",
+        "language": "english",
+        "style": "Clear, slow (Bark)",
+        "model": "bark",
     },
 }
 
@@ -154,11 +190,37 @@ async def synthesize(text: str, voice: str, format: str) -> bytes:
         # No language prefix — treat the whole string as a speaker name
         speaker_part = voice_lower or DEFAULT_SPEAKER
 
-    parler_voice = get_speaker_description(speaker_part)
+    # Indic-Parler-TTS languages
+    indic_langs = {
+        "as", "bn", "brx", "doi", "gu", "hi", "kn", "kok", "ks", "mai", "ml", "mni",
+        "mr", "ne", "or", "pa", "sa", "sat", "sd", "ta", "te", "ur"
+    }
+    model = "indic_parler" if lang in indic_langs else "bark"
+
+    if model == "indic_parler":
+        parler_voice = get_speaker_description(speaker_part)
+    else:
+        # For Bark, resolve the name to its corresponding Bark preset string
+        # e.g., "en_speaker_6" or "en-speaker-6" -> "v2/en_speaker_6"
+        normalized_part = speaker_part.replace("-", "_")
+        if normalized_part in SPEAKERS and SPEAKERS[normalized_part].get("model") == "bark":
+            parler_voice = SPEAKERS[normalized_part]["description"]
+        else:
+            # Map default or unrecognized voices to a valid Bark preset by gender
+            key = normalized_part
+            if key in SPEAKERS:
+                gender = SPEAKERS[key].get("gender", "female")
+            else:
+                gender = "female" if "female" in key else "male"
+            
+            if gender == "male":
+                parler_voice = "v2/en_speaker_6"
+            else:
+                parler_voice = "v2/en_speaker_9"
 
     logger.info(
         f"TTS → engine | lang={lang} speaker={speaker_part!r} "
-        f"description={parler_voice[:60]!r}..."
+        f"resolved_voice={parler_voice!r}..."
     )
 
     async with httpx.AsyncClient() as client:

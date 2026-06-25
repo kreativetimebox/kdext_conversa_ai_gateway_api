@@ -29,11 +29,12 @@ async def list_voices():
         "voices": [
             {
                 "id": name,
-                "name": name.capitalize(),
+                "name": name.capitalize().replace("_", " "),
                 "gender": info["gender"],
                 "style": info["style"],
                 "language": info["language"],
                 "example_voice_id": name,
+                "model": info.get("model", "indic_parler"),
             }
             for name, info in SPEAKERS.items()
         ],
