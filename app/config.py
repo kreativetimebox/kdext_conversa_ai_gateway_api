@@ -55,7 +55,13 @@ class Settings(BaseSettings):
         "audio/webm",
         "audio/ogg",
     ]
-
+    # Email / OTP
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    email_from: str = "noreply@kdext.ai"
+    otp_expires_minutes: int = 10
     # AWS S3 — set USE_S3_STORAGE=true to enable cloud audio storage
     use_s3_storage: bool = False
     aws_access_key_id: str | None = None

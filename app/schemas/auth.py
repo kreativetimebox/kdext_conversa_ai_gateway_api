@@ -43,3 +43,15 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     api_key: str
     expires_in: int
+class OTPVerifyRequest(BaseModel):
+    """POST /verify-otp request body."""
+    email: str = Field(..., min_length=5, max_length=255)
+    otp_code: str = Field(..., min_length=6, max_length=6)
+
+    _validate_email = field_validator("email")(validate_email)
+
+
+class OTPVerifyResponse(BaseModel):
+    """POST /verify-otp response body."""
+    message: str
+    verified: bool

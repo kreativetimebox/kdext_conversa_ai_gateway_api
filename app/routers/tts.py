@@ -10,6 +10,7 @@ from app.schemas.tts import TTSRequest
 from app.services.tts_service import synthesize, SPEAKERS
 from app.storage.audio_store import save_audio
 from app.services.usage import increment_success, increment_failure
+from app.services.rate_limiter import check_rate_limit
 from app.config import get_settings
 
 router = APIRouter(tags=["tts"])
@@ -83,7 +84,7 @@ async def text_to_speech(body: TTSRequest,
             "queue_position": queue_pos,
             "message": "Job submitted. Poll GET /jobs/{job_id} for status.",
         }
-
+    check_rate_limit(user.user_id, "tts", db)
     # ── Sync mode: process immediately (original behavior) ──
     job = TextToSpeech(detail=body.text, user_id=user.user_id)
     db.add(job)
