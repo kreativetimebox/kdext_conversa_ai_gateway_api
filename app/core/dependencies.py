@@ -10,14 +10,6 @@ settings = get_settings()
 bearer_scheme = HTTPBearer()
 
 
-def get_current_user(authorization: str = Header(...),
-                     db: Session = Depends(get_db)) -> User:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing bearer token"
-        )
-    token = authorization.split(" ", 1)[1]
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
