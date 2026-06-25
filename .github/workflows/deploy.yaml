@@ -58,6 +58,11 @@ jobs:
           AWS_S3_REGION: ${{ secrets.AWS_S3_REGION }}
           STT_ENGINE_URL: ${{ secrets.STT_ENGINE_URL }}
           TTS_ENGINE_URL: ${{ secrets.TTS_ENGINE_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
         run: |
           HOST="${{ secrets.SERVER_HOST }}"
           printf '%s\n' \
@@ -72,6 +77,11 @@ jobs:
             "AWS_S3_REGION=${AWS_S3_REGION}" \
             "STT_ENGINE_URL=${STT_ENGINE_URL}" \
             "TTS_ENGINE_URL=${TTS_ENGINE_URL}" \
+            "SMTP_HOST=${SMTP_HOST}" \
+            "SMTP_PORT=${SMTP_PORT}" \
+            "SMTP_USER=${SMTP_USER}" \
+            "SMTP_PASSWORD=${SMTP_PASSWORD}" \
+            "EMAIL_FROM=${EMAIL_FROM}" \
           | ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$HOST" \
               "cat > $REMOTE_DIR/.env && chmod 600 $REMOTE_DIR/.env"
 
