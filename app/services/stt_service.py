@@ -24,7 +24,7 @@ async def transcribe(
     filename: str = "audio.wav",
     content_type: str = "audio/wav",
     language: str | None = None,
-) -> str:
+) -> dict[str, Any]:
     """Transcribe audio via the configured STT engine, or local stub in dev."""
     if settings.stt_engine_url:
         data = {}
@@ -41,9 +41,10 @@ async def transcribe(
             resp.raise_for_status()
             content_type_header = resp.headers.get("content-type", "")
             if "application/json" in content_type_header:
-                return _extract_transcript(resp.json())
-            return resp.text.strip()
+                return resp.json()
+            return {"text": resp.text.strip(), "language": None, "words": []}
 
     logger.warning("STT_ENGINE_URL is not configured; using development stub transcriber")
     await asyncio.sleep(0.5)
-    return "Hello, welcome to the voice gateway."
+    return {"text": "Hello, welcome to the voice gateway.", "language": "en", "words": []}
+

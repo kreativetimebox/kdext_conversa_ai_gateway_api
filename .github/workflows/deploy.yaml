@@ -102,6 +102,9 @@ jobs:
             --env-file /home/balabantaray-user/voice-gateway/.env \
             "$image_name"
 
+          echo "Running database migrations..."
+          docker exec "$container_name" alembic upgrade head
+
           ready=false
           for i in $(seq 1 30); do
             if curl -fs http://localhost:8001/health; then

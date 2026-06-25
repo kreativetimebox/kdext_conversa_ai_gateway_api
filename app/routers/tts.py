@@ -7,7 +7,7 @@ from app.core.dependencies import verify_api_key
 from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.schemas.tts import TTSRequest
-from app.services.tts_service import synthesize, SPEAKERS
+from app.services.tts_service import synthesize, SPEAKERS, get_voice_info
 from app.storage.audio_store import save_audio
 from app.services.usage import increment_success, increment_failure
 from app.services.rate_limiter import check_rate_limit
@@ -52,13 +52,16 @@ async def text_to_speech(body: TTSRequest,
 
         # Compute queue position (number of currently queued jobs + 1)
         queue_pos = db.query(TextToSpeech).filter(TextToSpeech.status == "queued").count() + 1
+        lang, model = get_voice_info(body.voice)
 
         job = TextToSpeech(
-            detail=body.text,
+            input_text=body.text,
             user_id=user.user_id,
             status="queued",
             voice=body.voice,
             format=body.format,
+            language=lang,
+            model_used=model,
             webhook_url=body.webhook_url,
             queue_position=queue_pos,
         )
@@ -86,7 +89,13 @@ async def text_to_speech(body: TTSRequest,
         }
     check_rate_limit(user.user_id, "tts", db)
     # ── Sync mode: process immediately (original behavior) ──
-    job = TextToSpeech(detail=body.text, user_id=user.user_id)
+    lang, model = get_voice_info(body.voice)
+    job = TextToSpeech(
+        input_text=body.text,
+        user_id=user.user_id,
+        language=lang,
+        model_used=model,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -96,17 +105,18 @@ async def text_to_speech(body: TTSRequest,
         audio_bytes = await synthesize(body.text, body.voice, body.format)
         audio_url = save_audio(f"tts/{job.request_id}.{body.format}", audio_bytes)
 
-        job.audio = audio_url
+        job.audio_url = audio_url
+        job.audio_bytes = audio_bytes
         job.processing_time = round(time.perf_counter() - start, 3)
-        job.updating_time = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(timezone.utc)
         increment_success(user.user_id, db)
         db.commit()
         return {
             "request_id": job.request_id,
             "audio_url": audio_url,
-            "detail": job.detail,
+            "detail": job.input_text,
             "processing_time": job.processing_time,
-            "current_time": job.current_time,
+            "current_time": job.created_at,
         }
     except Exception as exc:
         increment_failure(user.user_id, db)
@@ -115,3 +125,4 @@ async def text_to_speech(body: TTSRequest,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Engine failure: {str(exc)}"
         )
+

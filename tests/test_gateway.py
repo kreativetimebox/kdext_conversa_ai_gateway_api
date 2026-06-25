@@ -54,7 +54,7 @@ def test_health(client):
     assert response.json() == {"status": "ok"}
 
 
-def test_signup_and_login(client):
+def test_signup_and_login(client, db_session):
     # Test Signup
     signup_payload = {
         "email": "test@example.com",
@@ -66,6 +66,17 @@ def test_signup_and_login(client):
     assert "api_key" in data
     assert data["email"] == "test@example.com"
     api_key = data["api_key"]
+
+    # Verify OTP
+    from app.models.otp import OTPVerification
+    otp_record = db_session.query(OTPVerification).filter(OTPVerification.purpose == "signup").first()
+    assert otp_record is not None
+    verify_response = client.post(
+        "/verify-otp",
+        json={"email": "test@example.com", "otp_code": otp_record.otp_code}
+    )
+    assert verify_response.status_code == 200
+    assert verify_response.json()["verified"] is True
 
     # Test Login
     login_payload = {
@@ -99,7 +110,7 @@ def test_signup_rejects_invalid_email(client):
     assert response.status_code == 422
 
 
-def test_text_to_speech_proxies_to_engine(client, monkeypatch):
+def test_text_to_speech_proxies_to_engine(client, db_session, monkeypatch):
     signup_response = client.post(
         "/signup",
         json={"email": "tts@example.com", "password": "securepassword123"},
@@ -129,6 +140,18 @@ def test_text_to_speech_proxies_to_engine(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["audio_url"] == "/audio/tts/1.wav"
     assert calls == [{"text": "Hello", "voice": "en-US-female-1", "format": "wav"}]
+
+    # Verify user with OTP
+    from app.models.otp import OTPVerification
+    from app.models.user import User
+    user = db_session.query(User).filter(User.email == "tts@example.com").first()
+    otp_record = db_session.query(OTPVerification).filter(OTPVerification.user_id == user.user_id, OTPVerification.purpose == "signup").first()
+    assert otp_record is not None
+    verify_response = client.post(
+        "/verify-otp",
+        json={"email": "tts@example.com", "otp_code": otp_record.otp_code}
+    )
+    assert verify_response.status_code == 200
 
     login_response = client.post(
         "/login",
@@ -184,7 +207,7 @@ async def test_tts_service_payload_matches_tts_microservice(monkeypatch):
     assert audio == b"RIFFfake wav"
     assert len(requests) == 1
     assert requests[0].url.path == "/v1/tts"
-    assert requests[0].read() == b'{"text":"Hello","language":"en","voice":"en-US-female-1"}'
+    assert requests[0].read() == b'{"text":"Hello","language":"en","voice":"Divya\'s voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise."}'
 
 
 def test_speech_to_text_passes_language_to_service(client, monkeypatch):
@@ -201,7 +224,7 @@ def test_speech_to_text_passes_language_to_service(client, monkeypatch):
         filename: str = "audio.wav",
         content_type: str = "audio/wav",
         language: str | None = None,
-    ) -> str:
+    ) -> dict:
         calls.append(
             {
                 "audio_bytes": audio_bytes,
@@ -210,7 +233,7 @@ def test_speech_to_text_passes_language_to_service(client, monkeypatch):
                 "language": language,
             }
         )
-        return "transcribed text"
+        return {"text": "transcribed text", "language": "en", "words": []}
 
     def fake_save_audio(relative_path: str, data: bytes) -> str:
         assert relative_path == "stt/1_sample.wav"

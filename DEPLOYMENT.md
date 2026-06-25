@@ -147,7 +147,7 @@ ALLOWED_ORIGINS=https://yourfrontend.com,https://www.yourfrontend.com
 TTS_ENGINE_URL=http://185.14.252.20:8000
 TTS_ENGINE_PATH=/v1/tts
 TTS_ALLOWED_FORMATS=wav
-MAX_TTS_TEXT_CHARS=1000
+MAX_TTS_TEXT_CHARS=500
 
 # ── STT Engine ────────────────────────────────────────────────────────────────
 STT_ENGINE_URL=http://185.14.252.20:8002
@@ -155,7 +155,7 @@ STT_ENGINE_PATH=/v1/stt
 ENGINE_TIMEOUT_SECONDS=60
 
 # ── Audio Storage ─────────────────────────────────────────────────────────────
-MAX_AUDIO_UPLOAD_BYTES=26214400
+MAX_AUDIO_UPLOAD_BYTES=5242880
 ALLOWED_AUDIO_CONTENT_TYPES=audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/webm,audio/ogg
 
 USE_S3_STORAGE=true
@@ -216,7 +216,7 @@ server {
     listen 80;
     server_name api.yourdomain.com;
 
-    client_max_body_size 30M;
+    client_max_body_size 6M;
 
     location / {
         proxy_pass         http://127.0.0.1:8001;
@@ -507,13 +507,13 @@ ALLOWED_ORIGINS=https://yourfrontend.com
 TTS_ENGINE_URL=http://185.14.252.20:8000
 TTS_ENGINE_PATH=/v1/tts
 TTS_ALLOWED_FORMATS=wav
-MAX_TTS_TEXT_CHARS=1000
+MAX_TTS_TEXT_CHARS=500
 STT_ENGINE_URL=http://185.14.252.20:8002
 STT_ENGINE_PATH=/v1/stt
 ENGINE_TIMEOUT_SECONDS=60
 
 # ── Audio Storage (S3) ────────────────────────────────────────────────────────
-MAX_AUDIO_UPLOAD_BYTES=26214400
+MAX_AUDIO_UPLOAD_BYTES=5242880
 ALLOWED_AUDIO_CONTENT_TYPES=audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/webm,audio/ogg
 USE_S3_STORAGE=true
 AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxx

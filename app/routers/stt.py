@@ -46,10 +46,12 @@ async def speech_to_text(file: UploadFile = File(...),
         queue_pos = db.query(SpeechToText).filter(SpeechToText.status == "queued").count() + 1
 
         job = SpeechToText(
-            audio="",
+            audio_url="",
+            audio_bytes=data,
+            input_format=content_type,
             user_id=user.user_id,
             status="queued",
-            language=language,
+            language_hint=language,
             webhook_url=webhook_url,
             queue_position=queue_pos,
         )
@@ -59,7 +61,7 @@ async def speech_to_text(file: UploadFile = File(...),
 
         # Upload audio to S3 so the worker can access it
         audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
-        job.audio = audio_url
+        job.audio_url = audio_url
         db.commit()
 
         send_job(
@@ -83,30 +85,39 @@ async def speech_to_text(file: UploadFile = File(...),
         }
     check_rate_limit(user.user_id, "stt", db)
     # ── Sync mode: process immediately (original behavior) ──
-    job = SpeechToText(audio="", user_id=user.user_id)
-    
+    job = SpeechToText(
+        audio_url="",
+        audio_bytes=data,
+        input_format=content_type,
+        user_id=user.user_id,
+        language_hint=language,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)
 
     audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
-    job.audio = audio_url
+    job.audio_url = audio_url
     db.commit()
 
     start = time.perf_counter()
     try:
-        text = await transcribe(data, filename=filename, content_type=content_type, language=language)
-        job.detail = text
+        result = await transcribe(data, filename=filename, content_type=content_type, language=language)
+        job.transcript = result.get("text")
+        job.detected_language = result.get("language")
+        job.segments = result.get("words")
         job.processing_time = round(time.perf_counter() - start, 3)
-        job.updating_time = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(timezone.utc)
         increment_success(user.user_id, db)
         db.commit()
         return {
             "request_id": job.request_id,
-            "detail": text,
+            "detail": job.transcript,
             "audio_url": audio_url,
             "processing_time": job.processing_time,
-            "current_time": job.current_time,
+            "current_time": job.created_at,
+            "detected_language": job.detected_language,
+            "segments": job.segments,
         }
     except Exception as exc:
         increment_failure(user.user_id, db)
@@ -115,3 +126,4 @@ async def speech_to_text(file: UploadFile = File(...),
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Engine failure: {str(exc)}"
         )
+

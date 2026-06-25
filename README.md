@@ -259,7 +259,7 @@ Default gateway config:
 TTS_ENGINE_URL=http://localhost:8000
 TTS_ENGINE_PATH=/v1/tts
 TTS_ALLOWED_FORMATS=wav
-MAX_TTS_TEXT_CHARS=1000
+MAX_TTS_TEXT_CHARS=500
 ```
 
 The Desktop TTS service runs from:
@@ -374,11 +374,11 @@ Counters:
 | `TTS_ENGINE_URL` | `http://localhost:8000` | Internal TTS service URL |
 | `TTS_ENGINE_PATH` | `/v1/tts` | Keep aligned with TTS service |
 | `TTS_ALLOWED_FORMATS` | `wav` | Current TTS service returns WAV |
-| `MAX_TTS_TEXT_CHARS` | `1000` | Match TTS service limit |
+| `MAX_TTS_TEXT_CHARS` | `500` | Match TTS service limit |
 | `STT_ENGINE_URL` | empty | Set real STT service URL |
 | `STT_ENGINE_PATH` | `/v1/stt` | Keep aligned with STT service |
 | `AUDIO_STORAGE_DIR` | `audio_storage` | Use durable disk or S3 replacement |
-| `MAX_AUDIO_UPLOAD_BYTES` | `26214400` | Tune upload limit |
+| `MAX_AUDIO_UPLOAD_BYTES` | `5242880` | 5 MB upload limit |
 
 Copy the template:
 

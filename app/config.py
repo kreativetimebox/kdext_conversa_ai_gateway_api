@@ -36,14 +36,14 @@ class Settings(BaseSettings):
     tts_engine_url: str = "http://localhost:8000"
     tts_engine_path: str = "/v1/tts"
     tts_allowed_formats: list[str] = ["wav"]
-    max_tts_text_chars: int = 1000
+    max_tts_text_chars: int = 500
     stt_engine_url: str | None = None
     stt_engine_path: str = "/v1/stt"
     engine_timeout_seconds: float = 60.0
 
     # Audio storage — local fallback
     audio_storage_dir: str = "audio_storage"
-    max_audio_upload_bytes: int = 25 * 1024 * 1024
+    max_audio_upload_bytes: int = 5 * 1024 * 1024
     allowed_audio_content_types: list[str] = [
         "audio/wav",
         "audio/wave",

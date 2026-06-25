@@ -173,3 +173,22 @@ async def synthesize(text: str, voice: str, format: str) -> bytes:
         )
         resp.raise_for_status()
         return resp.content
+
+
+def get_voice_info(voice: str) -> tuple[str, str]:
+    """Return a tuple of (language_code, model_used) for a given voice string."""
+    lang = "hi"  # default to Hindi for Indic speaker names
+    voice_lower = voice.strip().lower().replace("_", "-") if voice else ""
+
+    parts = voice_lower.split("-")
+    if parts and parts[0] in SUPPORTED_LANGS:
+        lang = parts[0]
+
+    # Indic-Parler-TTS languages
+    indic_langs = {
+        "as", "bn", "brx", "doi", "gu", "hi", "kn", "kok", "ks", "mai", "ml", "mni",
+        "mr", "ne", "or", "pa", "sa", "sat", "sd", "ta", "te", "ur"
+    }
+    model = "indic_parler" if lang in indic_langs else "bark"
+    return lang, model
+

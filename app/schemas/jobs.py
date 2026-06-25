@@ -29,3 +29,6 @@ class JobStatusResponse(BaseModel):
     webhook_sent_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None
+    detected_language: str | None = None
+    segments: list | None = None
+
