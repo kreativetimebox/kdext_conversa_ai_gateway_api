@@ -87,6 +87,24 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("jwt_expires", mode="before")
+    @classmethod
+    def empty_expires_is_default(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return 3600
+        if value is None:
+            return 3600
+        return value
+
+    @field_validator("smtp_port", mode="before")
+    @classmethod
+    def empty_port_is_default(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return 587
+        if value is None:
+            return 587
+        return value
+
     @field_validator("tts_engine_path", "stt_engine_path")
     @classmethod
     def paths_start_with_slash(cls, value: str) -> str:
