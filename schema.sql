@@ -66,7 +66,9 @@ CREATE TABLE IF NOT EXISTS users (
     login_time       TIMESTAMP     NULL,
     signout_time     TIMESTAMP     NULL,
     total_processing INTEGER       NOT NULL DEFAULT 0,
-    total_failed     INTEGER       NOT NULL DEFAULT 0
+    total_failed     INTEGER       NOT NULL DEFAULT 0,
+    is_verified      BOOLEAN       NOT NULL DEFAULT FALSE,
+    created_at       TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS ix_users_user_id  ON users (user_id);
@@ -118,5 +120,57 @@ CREATE TABLE IF NOT EXISTS speech_to_text (
 
 CREATE INDEX IF NOT EXISTS ix_speech_to_text_request_id ON speech_to_text (request_id);
 CREATE INDEX IF NOT EXISTS idx_stt_user                 ON speech_to_text (user_id);
+-- ----------------------------------------------------------
+-- 4. otp_verifications
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS otp_verifications (
+    id          SERIAL        PRIMARY KEY,
+    user_id     INTEGER       NOT NULL
+                    REFERENCES users (user_id)
+                    ON DELETE CASCADE,
+    otp_code    VARCHAR(6)    NOT NULL,
+    purpose     VARCHAR(20)   NOT NULL,
+    is_used     BOOLEAN       NOT NULL DEFAULT FALSE,
+    expires_at  TIMESTAMP     NOT NULL,
+    created_at  TIMESTAMP     NOT NULL DEFAULT NOW()
+);
 
+CREATE INDEX IF NOT EXISTS ix_otp_user ON otp_verifications (user_id);
+
+-- ----------------------------------------------------------
+-- 5. rate_limits
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rate_limits (
+    id             SERIAL    PRIMARY KEY,
+    user_id        INTEGER   NOT NULL
+                       REFERENCES users (user_id)
+                       ON DELETE CASCADE,
+    endpoint       VARCHAR(50)  NOT NULL,
+    window_minute  VARCHAR(20)  NOT NULL,
+    window_day     VARCHAR(10)  NOT NULL,
+    rpm_count      INTEGER      NOT NULL DEFAULT 0,
+    rpd_count      INTEGER      NOT NULL DEFAULT 0,
+    created_at     TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMP    NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_rate_limits_user ON rate_limits (user_id);
+
+-- ----------------------------------------------------------
+-- 6. error_logs
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS error_logs (
+    id            SERIAL        PRIMARY KEY,
+    user_id       INTEGER       NULL
+                      REFERENCES users (user_id)
+                      ON DELETE SET NULL,
+    endpoint      VARCHAR(255)  NOT NULL,
+    method        VARCHAR(10)   NOT NULL,
+    error_type    VARCHAR(100)  NOT NULL,
+    status_code   INTEGER       NULL,
+    error_message TEXT          NOT NULL,
+    created_at    TIMESTAMP     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_error_logs_user ON error_logs (user_id);
 COMMIT;
