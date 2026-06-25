@@ -20,17 +20,32 @@ settings = get_settings()
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(body: SignupRequest, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == body.email).first():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered"
+    existing_user = db.query(User).filter(User.email == body.email).first()
+    if existing_user:
+        if existing_user.is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already registered"
+            )
+        # Reuse and update existing unverified user
+        user = existing_user
+        user.password = hash_password(body.password)
+        user.api_key = generate_api_key()
+        
+        # Mark previous unused signup OTPs for this user as used
+        db.query(OTPVerification).filter(
+            OTPVerification.user_id == user.user_id,
+            OTPVerification.purpose == "signup",
+            OTPVerification.is_used == False
+        ).update({"is_used": True})
+    else:
+        user = User(
+            email=body.email,
+            password=hash_password(body.password),
+            api_key=generate_api_key(),
         )
-    user = User(
-        email=body.email,
-        password=hash_password(body.password),
-        api_key=generate_api_key(),
-    )
-    db.add(user)
+        db.add(user)
+    
     db.commit()
     db.refresh(user)
     

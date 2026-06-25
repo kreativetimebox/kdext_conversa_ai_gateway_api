@@ -110,6 +110,67 @@ def test_signup_rejects_invalid_email(client):
     assert response.status_code == 422
 
 
+def test_signup_overwrite_unverified(client, db_session):
+    # First signup
+    signup_payload1 = {
+        "email": "overwrite@example.com",
+        "password": "firstpassword123"
+    }
+    response1 = client.post("/signup", json=signup_payload1)
+    assert response1.status_code == 201
+    api_key1 = response1.json()["api_key"]
+
+    from app.models.otp import OTPVerification
+    otp_record1 = db_session.query(OTPVerification).filter(
+        OTPVerification.purpose == "signup",
+        OTPVerification.is_used == False
+    ).first()
+    assert otp_record1 is not None
+    otp_code1 = otp_record1.otp_code
+
+    # Second signup with same email (overwrite unverified account)
+    signup_payload2 = {
+        "email": "overwrite@example.com",
+        "password": "secondpassword123"
+    }
+    response2 = client.post("/signup", json=signup_payload2)
+    assert response2.status_code == 201
+    api_key2 = response2.json()["api_key"]
+    assert api_key2 != api_key1  # Should have regenerated API key
+
+    # Assert old OTP is now marked as used
+    db_session.refresh(otp_record1)
+    assert otp_record1.is_used is True
+
+    # Get new OTP
+    otp_record2 = db_session.query(OTPVerification).filter(
+        OTPVerification.purpose == "signup",
+        OTPVerification.is_used == False
+    ).first()
+    assert otp_record2 is not None
+    otp_code2 = otp_record2.otp_code
+    assert otp_code2 != otp_code1
+
+    # Verify using old OTP should fail
+    verify_response1 = client.post(
+        "/verify-otp",
+        json={"email": "overwrite@example.com", "otp_code": otp_code1}
+    )
+    assert verify_response1.status_code == 400
+
+    # Verify using new OTP should succeed
+    verify_response2 = client.post(
+        "/verify-otp",
+        json={"email": "overwrite@example.com", "otp_code": otp_code2}
+    )
+    assert verify_response2.status_code == 200
+
+    # Try to signup again after verification should fail
+    response3 = client.post("/signup", json=signup_payload2)
+    assert response3.status_code == 409
+    assert response3.json()["detail"] == "Email already registered"
+
+
 def test_text_to_speech_proxies_to_engine(client, db_session, monkeypatch):
     signup_response = client.post(
         "/signup",
