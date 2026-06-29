@@ -173,4 +173,54 @@ CREATE TABLE IF NOT EXISTS error_logs (
 );
 
 CREATE INDEX IF NOT EXISTS ix_error_logs_user ON error_logs (user_id);
+
+-- ----------------------------------------------------------
+-- 7. conversations
+-- ----------------------------------------------------------
+-- One row per chat/translation conversation. Persists the
+-- chatbot's history server-side (instead of browser-only),
+-- scoped to the owning user.
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversations (
+    conversation_id  SERIAL        PRIMARY KEY,
+    user_id          INTEGER       NOT NULL
+                         REFERENCES users (user_id)
+                         ON DELETE CASCADE,
+    title            VARCHAR(255)  NOT NULL DEFAULT 'New Chat',
+    mode             VARCHAR(20)   NOT NULL DEFAULT 'chat',  -- 'chat' | 'translate'
+    created_at       TIMESTAMP     NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMP     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_conversations_conversation_id ON conversations (conversation_id);
+CREATE INDEX IF NOT EXISTS ix_conversations_user_id         ON conversations (user_id);
+
+-- ----------------------------------------------------------
+-- 8. chat_messages
+-- ----------------------------------------------------------
+-- One row per message in a conversation. Translation turns
+-- additionally store source/target language and the engine
+-- used ('llm' or 'api').
+-- ----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id       SERIAL        PRIMARY KEY,
+    conversation_id  INTEGER       NOT NULL
+                         REFERENCES conversations (conversation_id)
+                         ON DELETE CASCADE,
+    user_id          INTEGER       NOT NULL
+                         REFERENCES users (user_id)
+                         ON DELETE CASCADE,
+    role             VARCHAR(20)   NOT NULL,   -- 'user' | 'assistant' | 'system'
+    content          TEXT          NOT NULL,
+    source_lang      VARCHAR(10)   NULL,
+    target_lang      VARCHAR(10)   NULL,
+    engine           VARCHAR(20)   NULL,
+    created_at       TIMESTAMP     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_chat_messages_message_id      ON chat_messages (message_id);
+CREATE INDEX IF NOT EXISTS ix_chat_messages_conversation_id ON chat_messages (conversation_id);
+CREATE INDEX IF NOT EXISTS ix_chat_messages_user_id         ON chat_messages (user_id);
+CREATE INDEX IF NOT EXISTS ix_chat_messages_conv_msg        ON chat_messages (conversation_id, message_id);
+
 COMMIT;

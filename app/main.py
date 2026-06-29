@@ -11,7 +11,8 @@ from sqlalchemy import text
 from app.database import Base, engine, SessionLocal
 from app.models import rate_limit  # noqa: F401 — registers table
 from app.models import error_log  # noqa: F401 — registers table
-from app.routers import auth, profile, tts, stt, jobs
+from app.models import conversation  # noqa: F401 — registers conversations + chat_messages
+from app.routers import auth, profile, tts, stt, jobs, chatbot, history
 from app.config import get_settings
 from app.core.logging import configure_logging
 from app.services.error_logger import log_error
@@ -48,6 +49,15 @@ app.include_router(profile.router)
 app.include_router(tts.router)
 app.include_router(stt.router)
 app.include_router(jobs.router)
+
+# Chat history storage (/conversations/*) — persists chats/translations in the DB.
+# Registered BEFORE the proxy so its routes are matched first (it lives at root,
+# not /api, so there is no collision anyway).
+app.include_router(history.router)
+
+# Chatbot LLM + voice surface (/api/chat, /api/translate, /api/voice/*, /v1/*),
+# reverse-proxied to the LLM service with the gateway's API-key management.
+app.include_router(chatbot.router)
 
 # Demo router — unauthenticated proxy endpoints for testing.
 # Set DISABLE_DEMO=true in production to remove /demo/* routes entirely.

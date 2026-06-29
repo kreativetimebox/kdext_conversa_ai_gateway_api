@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-me-in-production"
     jwt_expires: int = Field(default=3600, description="JWT token expiry in seconds")
 
+    # LLM service microservice — the chatbot backend (chat, translate, voice TTS/STT).
+    # The gateway reverse-proxies /api/* and /v1/* to this service, adding API-key
+    # management on top. Point this at wherever the LLM service is deployed.
+    llm_service_url: str = "http://185.14.252.20:8008"
+    llm_service_timeout: float = 120.0
+    # Require a gateway X-API-Key on the proxied LLM routes (managed access).
+    # Set false to let the chatbot frontend reach the LLM service without a key.
+    llm_require_api_key: bool = True
+
     # Voice engines
     tts_engine_url: str = "http://localhost:8000"
     tts_engine_path: str = "/v1/tts"
