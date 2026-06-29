@@ -29,6 +29,7 @@ from app.config import get_settings
 from app.core.dependencies import verify_api_key
 from app.database import get_db
 from app.models.user import User
+from app.services.rate_limiter import check_rate_limit
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chatbot"])
@@ -36,6 +37,30 @@ settings = get_settings()
 
 LLM_SERVICE_URL = settings.llm_service_url.rstrip("/")
 LLM_TIMEOUT = settings.llm_service_timeout
+LLM_SERVICE_API_KEY = settings.llm_service_api_key
+
+# One shared, connection-pooled client for all proxied traffic — avoids the
+# per-request socket/TLS handshake cost and lets the gateway scale to high
+# concurrency. Created lazily inside the running event loop.
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(
+            timeout=LLM_TIMEOUT,
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        )
+    return _client
+
+
+async def aclose_client() -> None:
+    """Close the shared client on app shutdown."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
 
 # Hop-by-hop / connection headers must not be forwarded in either direction.
 _HOP_BY_HOP = {
@@ -45,7 +70,7 @@ _HOP_BY_HOP = {
 # The gateway API key is consumed here — never leak it to the upstream service.
 # Drop accept-encoding so the upstream replies uncompressed: we stream raw bytes
 # straight through, so a gzipped body (with the header stripped) would corrupt.
-_STRIP_REQUEST_HEADERS = _HOP_BY_HOP | {"x-api-key", "accept-encoding"}
+_STRIP_REQUEST_HEADERS = _HOP_BY_HOP | {"x-api-key", "x-service-key", "accept-encoding"}
 
 
 def require_llm_access(
@@ -81,8 +106,11 @@ async def _proxy(request: Request, upstream_path: str) -> StreamingResponse:
         k: v for k, v in request.headers.items()
         if k.lower() not in _STRIP_REQUEST_HEADERS
     }
+    # Authenticate the gateway → LLM service hop so direct-IP bypass is rejected.
+    if LLM_SERVICE_API_KEY:
+        fwd_headers["X-Service-Key"] = LLM_SERVICE_API_KEY
 
-    client = httpx.AsyncClient(timeout=LLM_TIMEOUT)
+    client = _get_client()
     try:
         upstream_req = client.build_request(
             request.method,
@@ -93,7 +121,6 @@ async def _proxy(request: Request, upstream_path: str) -> StreamingResponse:
         )
         upstream = await client.send(upstream_req, stream=True)
     except httpx.RequestError as exc:
-        await client.aclose()
         logger.error("LLM service unreachable: %s %s — %s", request.method, url, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -105,8 +132,7 @@ async def _proxy(request: Request, upstream_path: str) -> StreamingResponse:
             async for chunk in upstream.aiter_raw():
                 yield chunk
         finally:
-            await upstream.aclose()
-            await client.aclose()
+            await upstream.aclose()   # close the response, keep the pooled client
 
     resp_headers = {
         k: v for k, v in upstream.headers.items()
@@ -120,13 +146,25 @@ async def _proxy(request: Request, upstream_path: str) -> StreamingResponse:
     )
 
 
+def _enforce_rate_limit(user: User | None, label: str, db: Session) -> None:
+    """Per-user rate limit on the model (skipped when keyless or disabled)."""
+    if user and settings.llm_rate_limit_enabled:
+        check_rate_limit(user.user_id, label, db)
+
+
 # Catch-all proxy: every /api/* and /v1/* route on the LLM service is forwarded,
-# gated by the gateway's API-key management.
+# gated by the gateway's API-key management + optional per-user rate limiting.
 @router.api_route(
     "/api/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
 )
-async def proxy_api(path: str, request: Request, _user=Depends(require_llm_access)):
+async def proxy_api(
+    path: str,
+    request: Request,
+    user=Depends(require_llm_access),
+    db: Session = Depends(get_db),
+):
+    _enforce_rate_limit(user, "llm", db)
     return await _proxy(request, f"/api/{path}")
 
 
@@ -134,5 +172,11 @@ async def proxy_api(path: str, request: Request, _user=Depends(require_llm_acces
     "/v1/{path:path}",
     methods=["GET", "POST"],
 )
-async def proxy_v1(path: str, request: Request, _user=Depends(require_llm_access)):
+async def proxy_v1(
+    path: str,
+    request: Request,
+    user=Depends(require_llm_access),
+    db: Session = Depends(get_db),
+):
+    _enforce_rate_limit(user, "llm", db)
     return await _proxy(request, f"/v1/{path}")

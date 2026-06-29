@@ -147,6 +147,12 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
+@app.on_event("shutdown")
+async def _shutdown():
+    """Close the shared proxy HTTP client cleanly."""
+    await chatbot.aclose_client()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "sqlite:///./voice_gateway.db"
+    db_pool_size: int = 10          # persistent connections per worker
+    db_max_overflow: int = 20       # extra burst connections
+    db_pool_recycle: int = 1800     # recycle connections after N seconds
 
     # JWT
     jwt_secret: str = "dev-secret-change-me-in-production"
@@ -37,9 +40,17 @@ class Settings(BaseSettings):
     # management on top. Point this at wherever the LLM service is deployed.
     llm_service_url: str = "http://185.14.252.20:8008"
     llm_service_timeout: float = 120.0
-    # Require a gateway X-API-Key on the proxied LLM routes (managed access).
-    # Set false to let the chatbot frontend reach the LLM service without a key.
+    # Require a gateway X-API-Key on the proxied LLM routes.
+    # True = one gateway API key unlocks ALL features (chat, translate, voice,
+    # history) for external clients. The internal hops stay keyless: gateway →
+    # LLM service → vLLM (llama, VLLM_API_KEY=EMPTY). Set False only for open demos.
     llm_require_api_key: bool = True
+    # Shared secret the gateway sends to the LLM service (X-Service-Key) so the
+    # LLM service rejects direct-IP hits that bypass the gateway. Must match the
+    # LLM service's SERVICE_API_KEY. Empty = don't send one.
+    llm_service_api_key: str = ""
+    # Per-user rate limiting on the proxied LLM routes (protects the GPU from abuse).
+    llm_rate_limit_enabled: bool = False
 
     # Voice engines
     tts_engine_url: str = "http://localhost:8000"
