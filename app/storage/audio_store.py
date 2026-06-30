@@ -85,8 +85,6 @@ def _save_to_s3(
             Key=s3_key,
             Body=data,
             ContentType=content_type,
-            # Remove this line if your bucket is private (use pre-signed URLs instead)
-            ACL="public-read",
         )
         # Standard S3 virtual-hosted style URL
         url = f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"
