@@ -51,11 +51,16 @@ def send_job(queue_url: str, job_id: int, job_type: str, payload: dict) -> str:
 
     try:
         client = _get_client()
-        response = client.send_message(
-            QueueUrl=queue_url,
-            MessageBody=message_body,
-            MessageGroupId=job_type if ".fifo" in queue_url else None,
-        )
+        send_kwargs = {
+            "QueueUrl": queue_url,
+            "MessageBody": message_body,
+        }
+        # FIFO queues require MessageGroupId and MessageDeduplicationId
+        if ".fifo" in queue_url:
+            send_kwargs["MessageGroupId"] = job_type
+            send_kwargs["MessageDeduplicationId"] = f"{job_type}-{job_id}"
+
+        response = client.send_message(**send_kwargs)
         message_id = response["MessageId"]
         logger.info("SQS message sent: job_id=%d type=%s MessageId=%s", job_id, job_type, message_id)
         return message_id
