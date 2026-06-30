@@ -48,16 +48,29 @@ jobs:
       - name: Write .env file on server
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DB_POOL_SIZE: ${{ secrets.DB_POOL_SIZE || '5' }}
+          DB_MAX_OVERFLOW: ${{ secrets.DB_MAX_OVERFLOW || '10' }}
+          DB_POOL_RECYCLE: ${{ secrets.DB_POOL_RECYCLE || '3600' }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           JWT_EXPIRES: ${{ secrets.JWT_EXPIRES }}
           ENVIRONMENT: ${{ secrets.ENVIRONMENT }}
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
           CREATE_DB_TABLES: ${{ secrets.CREATE_DB_TABLES }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          USE_S3_STORAGE: ${{ secrets.USE_S3_STORAGE || 'false' }}
           AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
           AWS_S3_REGION: ${{ secrets.AWS_S3_REGION }}
           STT_ENGINE_URL: ${{ secrets.STT_ENGINE_URL }}
           TTS_ENGINE_URL: ${{ secrets.TTS_ENGINE_URL }}
+          LLM_SERVICE_URL: ${{ secrets.LLM_SERVICE_URL || 'http://localhost:8008' }}
+          LLM_SERVICE_API_KEY: ${{ secrets.LLM_SERVICE_API_KEY }}
+          LLM_REQUIRE_API_KEY: ${{ secrets.LLM_REQUIRE_API_KEY || 'true' }}
+          LLM_RATE_LIMIT_ENABLED: ${{ secrets.LLM_RATE_LIMIT_ENABLED || 'true' }}
+          USE_ASYNC_QUEUE: ${{ secrets.USE_ASYNC_QUEUE || 'false' }}
+          AWS_SQS_REGION: ${{ secrets.AWS_SQS_REGION }}
+          AWS_SQS_TTS_QUEUE_URL: ${{ secrets.AWS_SQS_TTS_QUEUE_URL }}
+          AWS_SQS_STT_QUEUE_URL: ${{ secrets.AWS_SQS_STT_QUEUE_URL }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
@@ -67,16 +80,29 @@ jobs:
           HOST="${{ secrets.SERVER_HOST }}"
           printf '%s\n' \
             "DATABASE_URL=${DATABASE_URL}" \
+            "DB_POOL_SIZE=${DB_POOL_SIZE}" \
+            "DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW}" \
+            "DB_POOL_RECYCLE=${DB_POOL_RECYCLE}" \
             "JWT_SECRET=${JWT_SECRET}" \
             "JWT_EXPIRES=${JWT_EXPIRES}" \
             "ENVIRONMENT=${ENVIRONMENT}" \
             "LOG_LEVEL=${LOG_LEVEL}" \
             "CREATE_DB_TABLES=${CREATE_DB_TABLES}" \
             "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" \
+            "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" \
+            "USE_S3_STORAGE=${USE_S3_STORAGE}" \
             "AWS_S3_BUCKET=${AWS_S3_BUCKET}" \
             "AWS_S3_REGION=${AWS_S3_REGION}" \
             "STT_ENGINE_URL=${STT_ENGINE_URL}" \
             "TTS_ENGINE_URL=${TTS_ENGINE_URL}" \
+            "LLM_SERVICE_URL=${LLM_SERVICE_URL}" \
+            "LLM_SERVICE_API_KEY=${LLM_SERVICE_API_KEY}" \
+            "LLM_REQUIRE_API_KEY=${LLM_REQUIRE_API_KEY}" \
+            "LLM_RATE_LIMIT_ENABLED=${LLM_RATE_LIMIT_ENABLED}" \
+            "USE_ASYNC_QUEUE=${USE_ASYNC_QUEUE}" \
+            "AWS_SQS_REGION=${AWS_SQS_REGION}" \
+            "AWS_SQS_TTS_QUEUE_URL=${AWS_SQS_TTS_QUEUE_URL}" \
+            "AWS_SQS_STT_QUEUE_URL=${AWS_SQS_STT_QUEUE_URL}" \
             "SMTP_HOST=${SMTP_HOST}" \
             "SMTP_PORT=${SMTP_PORT}" \
             "SMTP_USER=${SMTP_USER}" \
