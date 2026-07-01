@@ -39,10 +39,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount the local audio directory only when NOT using S3.
-# In S3 mode, audio_url values are full HTTPS URLs — no local serving needed.
-if not settings.use_s3_storage:
-    app.mount("/audio", StaticFiles(directory=settings.audio_storage_dir), name="audio")
+from fastapi import HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
+
+@app.get("/audio/{path:path}")
+async def get_audio_file(path: str):
+    """Retrieve and stream audio file from local filesystem or private S3 bucket."""
+    if not settings.use_s3_storage:
+        # Serve local files
+        local_path = os.path.abspath(os.path.join(settings.audio_storage_dir, path))
+        storage_root = os.path.abspath(settings.audio_storage_dir)
+        
+        # Security check: prevent directory traversal
+        if os.path.commonpath([storage_root, local_path]) != storage_root:
+            raise HTTPException(status_code=403, detail="Access denied")
+            
+        if not os.path.exists(local_path):
+            raise HTTPException(status_code=404, detail="Audio file not found")
+            
+        content_type = "audio/wav"
+        if path.endswith(".mp3"):
+            content_type = "audio/mpeg"
+        return FileResponse(local_path, media_type=content_type)
+
+    # Serve from S3 (Gateway reverse-proxies S3)
+    bucket = settings.aws_s3_bucket
+    region = settings.aws_s3_region
+    try:
+        import boto3
+        # Create boto3 client
+        s3 = boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+        )
+        # Fetch object stream
+        response = s3.get_object(Bucket=bucket, Key=path)
+        content_type = response.get("ContentType", "audio/wav")
+        
+        # Stream it back
+        return StreamingResponse(
+            response["Body"],
+            media_type=content_type,
+            headers={
+                "Content-Length": str(response.get("ContentLength", "")),
+                "Accept-Ranges": "bytes",
+            }
+        )
+    except Exception as exc:
+        logger.error("Failed to stream S3 audio path %s from bucket %s: %s", path, bucket, exc)
+        raise HTTPException(status_code=404, detail="Audio file not found or inaccessible")
 
 app.include_router(auth.router)
 app.include_router(profile.router)

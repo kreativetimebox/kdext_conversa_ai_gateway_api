@@ -86,9 +86,9 @@ def _save_to_s3(
             Body=data,
             ContentType=content_type,
         )
-        # Standard S3 virtual-hosted style URL
-        url = f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"
-        logger.info("Uploaded audio to S3: %s", url)
+        # Return a relative path so the Gateway proxy routes it securely
+        url = f"/audio/{s3_key}"
+        logger.info("Uploaded audio to S3, returning relative path: %s", url)
         return url
 
     except (BotoCoreError, ClientError) as exc:
