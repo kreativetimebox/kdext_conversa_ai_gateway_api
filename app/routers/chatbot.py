@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.dependencies import verify_api_key
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.conversation import Conversation, ChatMessage
 from app.services.rate_limiter import check_rate_limit
@@ -93,13 +93,19 @@ def require_llm_access(
         )
     return verify_api_key(x_api_key=x_api_key, db=db)
 
+
 def _save_chat_messages(
-    db: Session,
     user_id: int,
     user_content: str,
     assistant_content: str,
 ) -> None:
-    """Create a conversation and save user + assistant messages. Never raises."""
+    """Create a conversation and save user + assistant messages.
+
+    Opens its own DB session so it is safe to call from a streaming generator
+    (where the request-scoped session from ``Depends(get_db)`` is already closed).
+    Never raises — errors are logged and the session is rolled back.
+    """
+    db = SessionLocal()
     try:
         conv = Conversation(user_id=user_id, title="New Chat", mode="chat")
         db.add(conv)
@@ -124,6 +130,10 @@ def _save_chat_messages(
     except Exception as exc:
         logger.error("chat_save_failed: %s", str(exc))
         db.rollback()
+    finally:
+        db.close()
+
+
 async def _proxy(request: Request, upstream_path: str) -> StreamingResponse:
     """Transparently forward a request to the LLM service and stream the reply.
 
@@ -242,7 +252,10 @@ async def proxy_chat(
             yield chunk
         await upstream.aclose()
 
-        # Extract assistant content and save both messages
+        # Extract assistant content and save both messages.
+        # NOTE: we use _save_chat_messages (which opens its own session)
+        # because the request-scoped `db` is closed by FastAPI before this
+        # generator finishes.
         if user and user_content:
             try:
                 full_text = b"".join(response_chunks).decode("utf-8", errors="ignore")
@@ -271,7 +284,6 @@ async def proxy_chat(
 
                 if assistant_content:
                     _save_chat_messages(
-                        db=db,
                         user_id=user.user_id,
                         user_content=user_content,
                         assistant_content=assistant_content,
@@ -289,6 +301,8 @@ async def proxy_chat(
         headers=resp_headers,
         media_type=upstream.headers.get("content-type"),
     )
+
+
 @router.api_route(
     "/api/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
