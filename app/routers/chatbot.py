@@ -268,14 +268,19 @@ async def proxy_chat(
                             except Exception:
                                 pass
                     assistant_content = "".join(parts)
-
                 if assistant_content:
-                    _save_chat_messages(
-                        db=db,
-                        user_id=user.user_id,
-                        user_content=user_content,
-                        assistant_content=assistant_content,
-                    )
+                    from app.database import SessionLocal
+                    fresh_db = SessionLocal()
+                    try:
+                        _save_chat_messages(
+                            db=fresh_db,
+                            user_id=user.user_id,
+                            user_content=user_content,
+                            assistant_content=assistant_content,
+                        )
+                    finally:
+                        fresh_db.close()
+                
             except Exception as exc:
                 logger.error("chat_db_save_error: %s", str(exc))
 
