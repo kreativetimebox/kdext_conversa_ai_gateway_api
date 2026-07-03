@@ -82,21 +82,42 @@ CREATE INDEX IF NOT EXISTS ix_users_api_key  ON users (api_key);
 -- the request to the TTS microservice over HTTP, saves the
 -- returned audio file, then updates this row with the
 -- audio path and processing time.
+--
+-- Column notes:
+--   status        : processing → completed | failed
+--   model_used    : 'indic_parler' | 'bark'
+--   audio_bytes   : raw generated audio (stored for replay/debugging)
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS text_to_speech (
     request_id      SERIAL            PRIMARY KEY,
-    audio           VARCHAR(512)      NULL,
-    detail          TEXT              NOT NULL,
+    audio_url       VARCHAR(512)      NULL,
+    audio_bytes     BYTEA             NULL,
+    input_text      TEXT              NOT NULL,
     user_id         INTEGER           NOT NULL
                         REFERENCES users (user_id)
                         ON DELETE CASCADE,
-    current_time    TIMESTAMP         NOT NULL DEFAULT NOW(),
-    updating_time   TIMESTAMP         NULL,
-    processing_time DOUBLE PRECISION  NULL
+    language        VARCHAR(10)       NULL,
+    model_used      VARCHAR(50)       NULL,
+    created_at      TIMESTAMP         NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMP         NULL,
+    processing_time DOUBLE PRECISION  NULL,
+
+    -- Async job queue fields
+    status          VARCHAR(20)       NOT NULL DEFAULT 'completed'
+                        CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
+    error_message   TEXT              NULL,
+    voice           VARCHAR(256)      NULL,
+    format          VARCHAR(16)       NULL DEFAULT 'wav',
+    queue_position  INTEGER           NULL,
+
+    -- Webhook callback fields
+    webhook_url     VARCHAR(2048)     NULL,
+    webhook_sent_at TIMESTAMP         NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_text_to_speech_request_id ON text_to_speech (request_id);
 CREATE INDEX IF NOT EXISTS idx_tts_user                 ON text_to_speech (user_id);
+CREATE INDEX IF NOT EXISTS ix_text_to_speech_status     ON text_to_speech (status);
 
 -- ----------------------------------------------------------
 -- 3. speech_to_text
@@ -105,21 +126,45 @@ CREATE INDEX IF NOT EXISTS idx_tts_user                 ON text_to_speech (user_
 -- creates a row, forwards the file to the STT microservice
 -- over HTTP, then updates this row with the transcript and
 -- processing time.
+--
+-- Column notes:
+--   status            : processing → completed | failed
+--   language_hint     : BCP-47 code supplied by caller
+--   detected_language : BCP-47 code returned by the engine
+--   segments          : word-level timing JSON from the engine
+--   audio_bytes       : raw input audio bytes (stored for replay/debugging)
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS speech_to_text (
-    request_id      SERIAL            PRIMARY KEY,
-    audio           VARCHAR(512)      NOT NULL,
-    detail          TEXT              NULL,
-    user_id         INTEGER           NOT NULL
-                        REFERENCES users (user_id)
-                        ON DELETE CASCADE,
-    current_time    TIMESTAMP         NOT NULL DEFAULT NOW(),
-    updating_time   TIMESTAMP         NULL,
-    processing_time DOUBLE PRECISION  NULL
+    request_id        SERIAL            PRIMARY KEY,
+    audio_url         VARCHAR(512)      NOT NULL,
+    audio_bytes       BYTEA             NULL,
+    input_format      VARCHAR(20)       NULL,
+    transcript        TEXT              NULL,
+    user_id           INTEGER           NOT NULL
+                          REFERENCES users (user_id)
+                          ON DELETE CASCADE,
+    created_at        TIMESTAMP         NOT NULL DEFAULT NOW(),
+    completed_at      TIMESTAMP         NULL,
+    processing_time   DOUBLE PRECISION  NULL,
+
+    -- Async job queue fields
+    status            VARCHAR(20)       NOT NULL DEFAULT 'completed'
+                          CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
+    error_message     TEXT              NULL,
+    language_hint     VARCHAR(10)       NULL,
+    detected_language VARCHAR(10)       NULL,
+    segments          JSONB             NULL,
+    queue_position    INTEGER           NULL,
+
+    -- Webhook callback fields
+    webhook_url       VARCHAR(2048)     NULL,
+    webhook_sent_at   TIMESTAMP         NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_speech_to_text_request_id ON speech_to_text (request_id);
 CREATE INDEX IF NOT EXISTS idx_stt_user                 ON speech_to_text (user_id);
+CREATE INDEX IF NOT EXISTS ix_speech_to_text_status     ON speech_to_text (status);
+
 -- ----------------------------------------------------------
 -- 4. otp_verifications
 -- ----------------------------------------------------------

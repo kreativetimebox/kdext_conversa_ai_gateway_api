@@ -94,8 +94,12 @@ async def text_to_speech(body: TTSRequest,
     job = TextToSpeech(
         input_text=body.text,
         user_id=user.user_id,
+        status="processing",
+        voice=body.voice,
+        format=body.format,
         language=lang,
         model_used=model,
+        webhook_url=body.webhook_url,
     )
     db.add(job)
     db.commit()
@@ -110,6 +114,7 @@ async def text_to_speech(body: TTSRequest,
         job.audio_bytes = audio_bytes
         job.processing_time = round(time.perf_counter() - start, 3)
         job.completed_at = datetime.now(timezone.utc)
+        job.status = "completed"
         increment_success(user.user_id, db)
         db.commit()
         return {
@@ -120,6 +125,10 @@ async def text_to_speech(body: TTSRequest,
             "current_time": job.created_at,
         }
     except Exception as exc:
+        # Mark the job as failed so the DB never shows status=completed with NULL results.
+        job.status = "failed"
+        job.error_message = str(exc)
+        job.processing_time = round(time.perf_counter() - start, 3)
         increment_failure(user.user_id, db)
         db.commit()
         raise HTTPException(

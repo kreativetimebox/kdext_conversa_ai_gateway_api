@@ -90,7 +90,9 @@ async def speech_to_text(file: UploadFile = File(...),
         audio_bytes=data,
         input_format=content_type,
         user_id=user.user_id,
+        status="processing",
         language_hint=language,
+        webhook_url=webhook_url,
     )
     db.add(job)
     db.commit()
@@ -108,6 +110,7 @@ async def speech_to_text(file: UploadFile = File(...),
         job.segments = result.get("words")
         job.processing_time = round(time.perf_counter() - start, 3)
         job.completed_at = datetime.now(timezone.utc)
+        job.status = "completed"
         increment_success(user.user_id, db)
         db.commit()
         return {
@@ -120,6 +123,10 @@ async def speech_to_text(file: UploadFile = File(...),
             "segments": job.segments,
         }
     except Exception as exc:
+        # Mark the job as failed so the DB never shows status=completed with NULL results.
+        job.status = "failed"
+        job.error_message = str(exc)
+        job.processing_time = round(time.perf_counter() - start, 3)
         increment_failure(user.user_id, db)
         db.commit()
         raise HTTPException(
