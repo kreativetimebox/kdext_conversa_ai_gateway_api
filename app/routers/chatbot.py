@@ -386,7 +386,11 @@ def _ws_upstream_url() -> str:
 @router.websocket("/ws/translate")
 async def ws_translate_proxy(websocket: WebSocket):
     """Proxy the live-translation WebSocket, gated by gateway API keys."""
-    # Authenticate before accepting (same policy as the HTTP LLM routes).
+    # Accept FIRST: closing before accept() is sent as a bare HTTP 403, so the
+    # browser would see a generic handshake failure (1006) instead of our close
+    # codes (4401 bad key / 1011 upstream down) and couldn't show why.
+    await websocket.accept()
+
     if settings.llm_require_api_key:
         api_key = (
             websocket.query_params.get("api_key")
@@ -407,17 +411,17 @@ async def ws_translate_proxy(websocket: WebSocket):
     try:
         import websockets
     except ImportError:
+        logger.error("ws_translate: websockets package not installed on gateway")
         await websocket.close(code=1011, reason="websockets package not installed")
         return
 
+    upstream_url = _ws_upstream_url()
     try:
-        upstream = await websockets.connect(_ws_upstream_url(), max_size=2**20)
+        upstream = await websockets.connect(upstream_url, max_size=2**20, open_timeout=10)
     except Exception as exc:
-        logger.error("LLM service WS unreachable: %s", exc)
+        logger.error("LLM service WS unreachable at %s: %s", upstream_url.split("?")[0], exc)
         await websocket.close(code=1011, reason="LLM service unreachable")
         return
-
-    await websocket.accept()
 
     async def client_to_upstream():
         while True:
