@@ -257,10 +257,14 @@ async def proxy_chat(
     response_chunks = []
 
     async def stream_and_save():
-        async for chunk in upstream.aiter_raw():
-            response_chunks.append(chunk)
-            yield chunk
-        await upstream.aclose()
+        # finally ensures the pooled connection is released even if the client
+        # disconnects mid-stream; the save below only runs on full completion.
+        try:
+            async for chunk in upstream.aiter_raw():
+                response_chunks.append(chunk)
+                yield chunk
+        finally:
+            await upstream.aclose()
 
         # Extract assistant content and save both messages.
         # NOTE: we use _save_chat_messages (which opens its own session)

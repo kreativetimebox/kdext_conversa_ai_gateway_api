@@ -59,24 +59,37 @@ async def speech_to_text(file: UploadFile = File(...),
         db.commit()
         db.refresh(job)
 
-        # Upload audio to S3 so the worker can access it
-        audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
-        job.audio_url = audio_url
-        db.commit()
+        try:
+            # Upload audio to S3 so the worker can access it
+            audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
+            job.audio_url = audio_url
+            db.commit()
 
-        send_job(
-            queue_url=settings.aws_sqs_stt_queue_url,
-            job_id=job.request_id,
-            job_type="stt",
-            payload={
-                "audio_url": audio_url,
-                "filename": filename,
-                "content_type": content_type,
-                "language": language,
-                "user_id": user.user_id,
-                "webhook_url": webhook_url,
-            },
-        )
+            send_job(
+                queue_url=settings.aws_sqs_stt_queue_url,
+                job_id=job.request_id,
+                job_type="stt",
+                payload={
+                    "audio_url": audio_url,
+                    "filename": filename,
+                    "content_type": content_type,
+                    "language": language,
+                    "user_id": user.user_id,
+                    "webhook_url": webhook_url,
+                },
+            )
+        except Exception as exc:
+            # Never leave a phantom "queued" row the worker will never pick up.
+            db.rollback()
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.completed_at = datetime.now(timezone.utc)
+            increment_failure(user.user_id, db)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to enqueue job: {str(exc)}"
+            )
         return {
             "job_id": job.request_id,
             "status": "queued",
@@ -98,12 +111,12 @@ async def speech_to_text(file: UploadFile = File(...),
     db.commit()
     db.refresh(job)
 
-    audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
-    job.audio_url = audio_url
-    db.commit()
-
     start = time.perf_counter()
     try:
+        audio_url = save_audio(f"stt/{job.request_id}_{filename}", data)
+        job.audio_url = audio_url
+        db.commit()
+
         result = await transcribe(data, filename=filename, content_type=content_type, language=language)
         job.transcript = result.get("text")
         job.detected_language = result.get("language")
@@ -124,9 +137,11 @@ async def speech_to_text(file: UploadFile = File(...),
         }
     except Exception as exc:
         # Mark the job as failed so the DB never shows status=completed with NULL results.
+        db.rollback()
         job.status = "failed"
         job.error_message = str(exc)
         job.processing_time = round(time.perf_counter() - start, 3)
+        job.completed_at = datetime.now(timezone.utc)
         increment_failure(user.user_id, db)
         db.commit()
         raise HTTPException(

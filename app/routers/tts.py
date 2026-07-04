@@ -70,18 +70,31 @@ async def text_to_speech(body: TTSRequest,
         db.commit()
         db.refresh(job)
 
-        send_job(
-            queue_url=settings.aws_sqs_tts_queue_url,
-            job_id=job.request_id,
-            job_type="tts",
-            payload={
-                "text": body.text,
-                "voice": body.voice,
-                "format": body.format,
-                "user_id": user.user_id,
-                "webhook_url": body.webhook_url,
-            },
-        )
+        try:
+            send_job(
+                queue_url=settings.aws_sqs_tts_queue_url,
+                job_id=job.request_id,
+                job_type="tts",
+                payload={
+                    "text": body.text,
+                    "voice": body.voice,
+                    "format": body.format,
+                    "user_id": user.user_id,
+                    "webhook_url": body.webhook_url,
+                },
+            )
+        except Exception as exc:
+            # Never leave a phantom "queued" row the worker will never pick up.
+            db.rollback()
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.completed_at = datetime.now(timezone.utc)
+            increment_failure(user.user_id, db)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to enqueue job: {str(exc)}"
+            )
         return {
             "job_id": job.request_id,
             "status": "queued",
@@ -126,9 +139,11 @@ async def text_to_speech(body: TTSRequest,
         }
     except Exception as exc:
         # Mark the job as failed so the DB never shows status=completed with NULL results.
+        db.rollback()
         job.status = "failed"
         job.error_message = str(exc)
         job.processing_time = round(time.perf_counter() - start, 3)
+        job.completed_at = datetime.now(timezone.utc)
         increment_failure(user.user_id, db)
         db.commit()
         raise HTTPException(
