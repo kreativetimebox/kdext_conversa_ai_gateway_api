@@ -83,8 +83,8 @@ _HOP_BY_HOP = {
 # straight through, so a gzipped body (with the header stripped) would corrupt.
 _STRIP_REQUEST_HEADERS = _HOP_BY_HOP | {
     "x-api-key", "x-service-key", "accept-encoding",
-    # Gateway-only chat-history hint — meaningless to the upstream LLM service.
-    "x-conversation-id",
+    # Gateway-only chat-history hints — meaningless to the upstream LLM service.
+    "x-conversation-id", "x-client-persist",
 }
 
 
@@ -247,6 +247,10 @@ async def proxy_chat(
     except ValueError:
         conversation_id = None
 
+    # Clients that persist chats themselves (via /conversations) send
+    # X-Client-Persist so the gateway doesn't double-save the exchange.
+    client_persists = request.headers.get("x-client-persist") is not None
+
     # Read body once — needed for both DB saving and forwarding
     body_bytes = await request.body()
 
@@ -301,7 +305,7 @@ async def proxy_chat(
         # NOTE: we use _save_chat_messages (which opens its own session)
         # because the request-scoped `db` is closed by FastAPI before this
         # generator finishes.
-        if user and user_content:
+        if user and user_content and not client_persists:
             try:
                 full_text = b"".join(response_chunks).decode("utf-8", errors="ignore")
                 assistant_content = ""
