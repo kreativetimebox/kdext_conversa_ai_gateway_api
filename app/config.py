@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     llm_service_api_key: str = ""
     # Per-user rate limiting on the proxied LLM routes (protects the GPU from abuse).
     llm_rate_limit_enabled: bool = False
+    rate_limit_rpm: int = 50
+    rate_limit_rpd: int = 1000
 
     # Voice engines
     tts_engine_url: str = "http://localhost:8000"
