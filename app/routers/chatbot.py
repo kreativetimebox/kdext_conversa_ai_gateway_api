@@ -419,9 +419,28 @@ async def ws_translate_proxy(websocket: WebSocket):
     try:
         upstream = await websockets.connect(upstream_url, max_size=2**20, open_timeout=10)
     except Exception as exc:
-        logger.error("LLM service WS unreachable at %s: %s", upstream_url.split("?")[0], exc)
-        await websocket.close(code=1011, reason="LLM service unreachable")
-        return
+        # Fallback to the alternative endpoint shape:
+        # If upstream_url is /ws/translate, try /api/translate/ws
+        # If upstream_url is /api/translate/ws, try /ws/translate
+        alt_url = upstream_url
+        if "/ws/translate" in upstream_url:
+            alt_url = upstream_url.replace("/ws/translate", "/api/translate/ws")
+        elif "/api/translate/ws" in upstream_url:
+            alt_url = upstream_url.replace("/api/translate/ws", "/ws/translate")
+        
+        if alt_url != upstream_url:
+            logger.info("Retrying LLM service WS with fallback URL: %s", alt_url.split("?")[0])
+            try:
+                upstream = await websockets.connect(alt_url, max_size=2**20, open_timeout=10)
+            except Exception as exc2:
+                logger.error("LLM service WS unreachable at both %s and %s: %s", 
+                             upstream_url.split("?")[0], alt_url.split("?")[0], exc2)
+                await websocket.close(code=1011, reason="LLM service unreachable")
+                return
+        else:
+            logger.error("LLM service WS unreachable at %s: %s", upstream_url.split("?")[0], exc)
+            await websocket.close(code=1011, reason="LLM service unreachable")
+            return
 
     async def client_to_upstream():
         while True:
