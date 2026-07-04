@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # Audio storage — local fallback
     audio_storage_dir: str = "audio_storage"
-    max_audio_upload_bytes: int = 5 * 1024 * 1024
+    max_audio_upload_bytes: int = 25 * 1024 * 1024
     allowed_audio_content_types: list[str] = [
         "audio/wav",
         "audio/wave",

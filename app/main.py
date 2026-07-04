@@ -39,6 +39,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Fast file size validation via Content-Length header before downloading file data
+@app.middleware("http")
+async def limit_upload_size(request: Request, call_next):
+    if request.url.path in ("/speech-to-text", "/demo/stt"):
+        if request.method == "POST":
+            content_length = request.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > settings.max_audio_upload_bytes:
+                        return JSONResponse(
+                            status_code=413,
+                            content={"detail": "Uploaded audio file is too large"}
+                        )
+                except ValueError:
+                    pass
+    return await call_next(request)
+
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
