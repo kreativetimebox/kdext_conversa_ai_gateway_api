@@ -13,6 +13,21 @@ from app.schemas.jobs import JobStatusResponse
 router = APIRouter(tags=["jobs"])
 
 
+def _live_queue_position(db: Session, model, job) -> int | None:
+    """Current position in the queue: queued jobs submitted at or before this one.
+
+    The position stored at submit time goes stale as the queue drains, so it is
+    recomputed here for jobs still queued.
+    """
+    if job.status != "queued":
+        return None
+    return (
+        db.query(model)
+        .filter(model.status == "queued", model.request_id <= job.request_id)
+        .count()
+    )
+
+
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 def get_job_status(job_id: int,
                    user: User = Depends(verify_api_key),
@@ -33,7 +48,7 @@ def get_job_status(job_id: int,
             job_id=tts_job.request_id,
             job_type="tts",
             status=tts_job.status,
-            queue_position=tts_job.queue_position,
+            queue_position=_live_queue_position(db, TextToSpeech, tts_job),
             audio_url=tts_job.audio_url,
             detail=tts_job.input_text,
             processing_time=tts_job.processing_time,
@@ -55,7 +70,7 @@ def get_job_status(job_id: int,
             job_id=stt_job.request_id,
             job_type="stt",
             status=stt_job.status,
-            queue_position=stt_job.queue_position,
+            queue_position=_live_queue_position(db, SpeechToText, stt_job),
             audio_url=stt_job.audio_url,
             detail=stt_job.transcript,
             processing_time=stt_job.processing_time,

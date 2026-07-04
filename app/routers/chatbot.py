@@ -81,7 +81,11 @@ _HOP_BY_HOP = {
 # The gateway API key is consumed here — never leak it to the upstream service.
 # Drop accept-encoding so the upstream replies uncompressed: we stream raw bytes
 # straight through, so a gzipped body (with the header stripped) would corrupt.
-_STRIP_REQUEST_HEADERS = _HOP_BY_HOP | {"x-api-key", "x-service-key", "accept-encoding"}
+_STRIP_REQUEST_HEADERS = _HOP_BY_HOP | {
+    "x-api-key", "x-service-key", "accept-encoding",
+    # Gateway-only chat-history hint — meaningless to the upstream LLM service.
+    "x-conversation-id",
+}
 
 
 def require_llm_access(
@@ -108,18 +112,38 @@ def _save_chat_messages(
     user_id: int,
     user_content: str,
     assistant_content: str,
+    conversation_id: int | None = None,
 ) -> None:
-    """Create a conversation and save user + assistant messages.
+    """Save user + assistant messages, appending to an existing conversation
+    when the client sent X-Conversation-Id (and it belongs to this user),
+    otherwise creating a new conversation titled after the first message.
 
     Opens its own DB session so it is safe to call from a streaming generator
     (where the request-scoped session from ``Depends(get_db)`` is already closed).
     Never raises — errors are logged and the session is rolled back.
     """
+    from sqlalchemy.sql import func as _func
+
     db = SessionLocal()
     try:
-        conv = Conversation(user_id=user_id, title="New Chat", mode="chat")
-        db.add(conv)
-        db.flush()  # get conversation_id without committing yet
+        conv = None
+        if conversation_id is not None:
+            conv = (
+                db.query(Conversation)
+                .filter(
+                    Conversation.conversation_id == conversation_id,
+                    Conversation.user_id == user_id,
+                )
+                .first()
+            )
+        if conv:
+            # Keep list ordering fresh — this conversation just saw activity.
+            conv.updated_at = _func.now()
+        else:
+            title = (user_content.strip()[:80] or "New Chat")
+            conv = Conversation(user_id=user_id, title=title, mode="chat")
+            db.add(conv)
+            db.flush()  # get conversation_id without committing yet
 
         db.add(ChatMessage(
             conversation_id=conv.conversation_id,
@@ -216,6 +240,13 @@ async def proxy_chat(
 
     _enforce_rate_limit(user, "llm", db)
 
+    # Optional gateway-only header: continue an existing conversation instead
+    # of creating a new one per turn (ownership is verified at save time).
+    try:
+        conversation_id = int(request.headers.get("x-conversation-id", ""))
+    except ValueError:
+        conversation_id = None
+
     # Read body once — needed for both DB saving and forwarding
     body_bytes = await request.body()
 
@@ -301,6 +332,7 @@ async def proxy_chat(
                         user_id=user.user_id,
                         user_content=user_content,
                         assistant_content=assistant_content,
+                        conversation_id=conversation_id,
                     )
             except Exception as exc:
                 logger.error("chat_db_save_error: %s", str(exc))

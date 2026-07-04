@@ -38,6 +38,9 @@ async def speech_to_text(file: UploadFile = File(...),
     # Save incoming audio file (needed for both sync and async)
     filename = file.filename or "upload.wav"
 
+    # Rate-limit before creating any job row — applies to sync AND async mode.
+    check_rate_limit(user.user_id, "stt", db)
+
     # ── Async mode: upload audio to S3, queue the job ──
     if settings.use_async_queue:
         from app.services.sqs_client import send_job
@@ -96,7 +99,6 @@ async def speech_to_text(file: UploadFile = File(...),
             "queue_position": queue_pos,
             "message": "Job submitted. Poll GET /jobs/{job_id} for status.",
         }
-    check_rate_limit(user.user_id, "stt", db)
     # ── Sync mode: process immediately (original behavior) ──
     job = SpeechToText(
         audio_url="",

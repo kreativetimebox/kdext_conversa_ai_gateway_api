@@ -47,6 +47,9 @@ async def list_voices():
 async def text_to_speech(body: TTSRequest,
                          user: User = Depends(verify_api_key),
                          db: Session = Depends(get_db)):
+    # Rate-limit before creating any job row — applies to sync AND async mode.
+    check_rate_limit(user.user_id, "tts", db)
+
     # ── Async mode: queue the job and return immediately ──
     if settings.use_async_queue:
         from app.services.sqs_client import send_job
@@ -101,7 +104,6 @@ async def text_to_speech(body: TTSRequest,
             "queue_position": queue_pos,
             "message": "Job submitted. Poll GET /jobs/{job_id} for status.",
         }
-    check_rate_limit(user.user_id, "tts", db)
     # ── Sync mode: process immediately (original behavior) ──
     lang, model = get_voice_info(body.voice)
     job = TextToSpeech(
