@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     host: str = "0.0.0.0"
     port: int = 8001
-    allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:8001"]
+    allowed_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:8001",
+        "http://localhost:5173",
+        "https://main.dexaitech.com",
+    ]
     create_db_tables: bool = True
 
     # Database
