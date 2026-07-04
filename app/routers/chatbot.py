@@ -18,10 +18,20 @@ Streaming is preserved end-to-end, so chat SSE and TTS audio start playing
 immediately. Any new route the LLM service adds is proxied automatically.
 """
 
+import asyncio
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -315,6 +325,90 @@ async def proxy_api(
 ):
     _enforce_rate_limit(user, "llm", db)
     return await _proxy(request, f"/api/{path}")
+
+
+# ── Live translation WebSocket proxy ─────────────────────────────────────────
+# Bridges the client's WebSocket to the LLM service's /ws/translate so typed
+# text is translated live (token-by-token) through the gateway. Browsers cannot
+# set headers on WebSockets, so the gateway API key is accepted via the
+# ?api_key= query param (an X-API-Key header also works for non-browser
+# clients). The upstream hop is authenticated with the service key.
+
+
+def _ws_upstream_url() -> str:
+    base = LLM_SERVICE_URL.replace("https://", "wss://").replace("http://", "ws://")
+    url = f"{base}/ws/translate"
+    if LLM_SERVICE_API_KEY:
+        url += f"?service_key={LLM_SERVICE_API_KEY}"
+    return url
+
+
+@router.websocket("/ws/translate")
+async def ws_translate_proxy(websocket: WebSocket):
+    """Proxy the live-translation WebSocket, gated by gateway API keys."""
+    # Authenticate before accepting (same policy as the HTTP LLM routes).
+    if settings.llm_require_api_key:
+        api_key = (
+            websocket.query_params.get("api_key")
+            or websocket.headers.get("x-api-key")
+        )
+        if not api_key:
+            await websocket.close(code=4401, reason="Missing API key")
+            return
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.api_key == api_key).first()
+        finally:
+            db.close()
+        if not user:
+            await websocket.close(code=4401, reason="Invalid API key")
+            return
+
+    try:
+        import websockets
+    except ImportError:
+        await websocket.close(code=1011, reason="websockets package not installed")
+        return
+
+    try:
+        upstream = await websockets.connect(_ws_upstream_url(), max_size=2**20)
+    except Exception as exc:
+        logger.error("LLM service WS unreachable: %s", exc)
+        await websocket.close(code=1011, reason="LLM service unreachable")
+        return
+
+    await websocket.accept()
+
+    async def client_to_upstream():
+        while True:
+            data = await websocket.receive_text()
+            await upstream.send(data)
+
+    async def upstream_to_client():
+        async for message in upstream:
+            if isinstance(message, bytes):
+                await websocket.send_bytes(message)
+            else:
+                await websocket.send_text(message)
+
+    pump_up = asyncio.create_task(client_to_upstream())
+    pump_down = asyncio.create_task(upstream_to_client())
+    try:
+        done, pending = await asyncio.wait(
+            {pump_up, pump_down}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            exc = task.exception()
+            if exc and not isinstance(exc, (WebSocketDisconnect,)):
+                logger.info("ws_translate proxy closed: %s", exc)
+    finally:
+        await upstream.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.api_route(

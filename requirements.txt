@@ -21,3 +21,6 @@ structlog==24.4.0
 boto3==1.35.0
 
 pytest==8.3.4
+
+# WebSocket client for the live-translation proxy (also bundled by uvicorn[standard])
+websockets>=12.0
