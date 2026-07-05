@@ -268,7 +268,7 @@ async def test_tts_service_payload_matches_tts_microservice(monkeypatch):
     assert audio == b"RIFFfake wav"
     assert len(requests) == 1
     assert requests[0].url.path == "/v1/tts"
-    assert requests[0].read() == b'{"text":"Hello","language":"en","voice":"v2/en_speaker_9"}'
+    assert requests[0].read() == b'{"text":"Hello","language":"en","voice":"vivian"}'
 
 
 def test_speech_to_text_passes_language_to_service(client, monkeypatch):

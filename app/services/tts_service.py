@@ -13,19 +13,22 @@ settings = get_settings()
 SUPPORTED_LANGS = {
     "as", "bn", "brx", "doi", "gu", "hi", "kn", "kok", "ks", "mai", "ml", "mni",
     "mr", "ne", "or", "pa", "sa", "sat", "sd", "ta", "te", "ur",   # Indic → Parler
-    "ar", "de", "en", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh",  # → Bark
+    "de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "zh",  # → Qwen3-TTS-CustomVoice
 }
 
 # ---------------------------------------------------------------------------
 # Named speaker registry
 #
-# These are real speaker names from ai4bharat/indic-parler-tts.  Using named
-# speakers produces dramatically more consistent voice across chunks compared
-# to open-ended descriptions, because the model maps them to a fixed pre-trained
-# speaker embedding rather than sampling from a generic description space.
+# Indic speakers are real speaker names from ai4bharat/indic-parler-tts; using
+# named speakers produces dramatically more consistent voice across chunks
+# compared to open-ended descriptions, because the model maps them to a fixed
+# pre-trained speaker embedding rather than sampling from a generic
+# description space. Non-Indic speakers are the 9 named presets shipped with
+# Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice.
 #
 # Each entry has:
-#   description : str   — the prompt sent to Indic-Parler-TTS
+#   description : str   — the prompt (Indic-Parler) or speaker id (Qwen3-TTS)
+#                          sent to the TTS engine
 #   gender      : str   — "female" | "male"
 #   language    : str   — primary language ("multilingual" if works across langs)
 #   style       : str   — human-readable style label shown in /voices response
@@ -113,36 +116,78 @@ SPEAKERS: dict[str, dict] = {
         "style": "Clear, slightly fast",
         "model": "indic_parler",
     },
-    # ── Bark speakers ────────────────────────────────────────────────────────
-    "en_speaker_6": {
-        "description": "v2/en_speaker_6",
+    # ── Qwen3-TTS-CustomVoice speakers ──────────────────────────────────────
+    # "description" here is the literal speaker name qwen-tts expects — unlike
+    # Indic-Parler, Qwen3-TTS-CustomVoice takes a named speaker id directly,
+    # not a free-text description. Any speaker can render any of the 10
+    # supported global languages (cross-lingual), hence "multilingual" below.
+    "vivian": {
+        "description": "vivian",
         "gender": "female",
-        "language": "english",
-        "style": "Clear, neutral (Bark)",
-        "model": "bark",
+        "language": "multilingual",
+        "style": "Bright, slightly edgy young female",
+        "model": "qwen_custom_voice",
     },
-    "en_speaker_9": {
-        "description": "v2/en_speaker_9",
+    "serena": {
+        "description": "serena",
         "gender": "female",
-        "language": "english",
-        "style": "Clear, expressive (Bark)",
-        "model": "bark",
+        "language": "multilingual",
+        "style": "Warm, gentle young female",
+        "model": "qwen_custom_voice",
     },
-    "en_speaker_3": {
-        "description": "v2/en_speaker_3",
+    "ono_anna": {
+        "description": "ono_anna",
         "gender": "female",
-        "language": "english",
-        "style": "Soft, warm (Bark)",
-        "model": "bark",
+        "language": "multilingual",
+        "style": "Playful, light and nimble timbre",
+        "model": "qwen_custom_voice",
     },
-    "en_speaker_1": {
-        "description": "v2/en_speaker_1",
+    "sohee": {
+        "description": "sohee",
+        "gender": "female",
+        "language": "multilingual",
+        "style": "Warm, rich emotion",
+        "model": "qwen_custom_voice",
+    },
+    "uncle_fu": {
+        "description": "uncle_fu",
         "gender": "male",
-        "language": "english",
-        "style": "Clear, slow (Bark)",
-        "model": "bark",
+        "language": "multilingual",
+        "style": "Seasoned, low mellow timbre",
+        "model": "qwen_custom_voice",
+    },
+    "dylan": {
+        "description": "dylan",
+        "gender": "male",
+        "language": "multilingual",
+        "style": "Youthful, clear natural timbre",
+        "model": "qwen_custom_voice",
+    },
+    "eric": {
+        "description": "eric",
+        "gender": "male",
+        "language": "multilingual",
+        "style": "Lively, slightly husky brightness",
+        "model": "qwen_custom_voice",
+    },
+    "ryan": {
+        "description": "ryan",
+        "gender": "male",
+        "language": "multilingual",
+        "style": "Dynamic, strong rhythmic drive",
+        "model": "qwen_custom_voice",
+    },
+    "aiden": {
+        "description": "aiden",
+        "gender": "male",
+        "language": "multilingual",
+        "style": "Sunny, clear midrange",
+        "model": "qwen_custom_voice",
     },
 }
+
+# Default Qwen3-TTS-CustomVoice speaker when the requested one isn't recognized.
+DEFAULT_QWEN_SPEAKER = "ryan"
 
 # Default speaker when none is specified or the name is not found
 DEFAULT_SPEAKER = "divya"
@@ -195,28 +240,25 @@ async def synthesize(text: str, voice: str, format: str) -> bytes:
         "as", "bn", "brx", "doi", "gu", "hi", "kn", "kok", "ks", "mai", "ml", "mni",
         "mr", "ne", "or", "pa", "sa", "sat", "sd", "ta", "te", "ur"
     }
-    model = "indic_parler" if lang in indic_langs else "bark"
+    model = "indic_parler" if lang in indic_langs else "qwen_custom_voice"
 
     if model == "indic_parler":
         parler_voice = get_speaker_description(speaker_part)
     else:
-        # For Bark, resolve the name to its corresponding Bark preset string
-        # e.g., "en_speaker_6" or "en-speaker-6" -> "v2/en_speaker_6"
+        # For Qwen3-TTS-CustomVoice, resolve the name to one of its 9 named
+        # speakers — e.g. "ono_anna" or "ono-anna" -> "ono_anna".
         normalized_part = speaker_part.replace("-", "_")
-        if normalized_part in SPEAKERS and SPEAKERS[normalized_part].get("model") == "bark":
+        if normalized_part in SPEAKERS and SPEAKERS[normalized_part].get("model") == "qwen_custom_voice":
             parler_voice = SPEAKERS[normalized_part]["description"]
         else:
-            # Map default or unrecognized voices to a valid Bark preset by gender
+            # Map default or unrecognized voices to a Qwen speaker by gender
             key = normalized_part
             if key in SPEAKERS:
-                gender = SPEAKERS[key].get("gender", "female")
+                gender = SPEAKERS[key].get("gender", "male")
             else:
                 gender = "female" if "female" in key else "male"
-            
-            if gender == "male":
-                parler_voice = "v2/en_speaker_6"
-            else:
-                parler_voice = "v2/en_speaker_9"
+
+            parler_voice = "vivian" if gender == "female" else DEFAULT_QWEN_SPEAKER
 
     logger.info(
         f"TTS → engine | lang={lang} speaker={speaker_part!r} "
@@ -251,6 +293,6 @@ def get_voice_info(voice: str) -> tuple[str, str]:
         "as", "bn", "brx", "doi", "gu", "hi", "kn", "kok", "ks", "mai", "ml", "mni",
         "mr", "ne", "or", "pa", "sa", "sat", "sd", "ta", "te", "ur"
     }
-    model = "indic_parler" if lang in indic_langs else "bark"
+    model = "indic_parler" if lang in indic_langs else "qwen_custom_voice"
     return lang, model
 
