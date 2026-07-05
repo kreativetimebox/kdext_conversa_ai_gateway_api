@@ -35,12 +35,15 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from dataclasses import dataclass
+
 from app.config import get_settings
 from app.core.dependencies import verify_api_key
+from app.core.ttl_cache import TTLCache
 from app.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.conversation import Conversation, ChatMessage
-from app.services.rate_limiter import check_rate_limit
+from app.services.rate_limiter import check_rate_limit_in_memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chatbot"])
@@ -49,6 +52,32 @@ settings = get_settings()
 LLM_SERVICE_URL = settings.llm_service_url.rstrip("/")
 LLM_TIMEOUT = settings.llm_service_timeout
 LLM_SERVICE_API_KEY = settings.llm_service_api_key
+
+# Chat/translate/live-translate all sit on this same LLM-service-proxy
+# subsystem and share one bottleneck: every request/connection was
+# re-validating the API key against Postgres, which is in a different AWS
+# region from this gateway — each lookup pays a full cross-region round-trip
+# even though a key's validity essentially never changes within a minute.
+# This cache removes that repeated cost; TTS/STT's own routers are untouched.
+@dataclass(slots=True)
+class _CachedUser:
+    """Minimal stand-in for User — only .user_id is read on the cached path."""
+    user_id: int
+
+
+_api_key_user_cache: TTLCache[int] = TTLCache(ttl_seconds=60)
+
+
+def _resolve_user_by_api_key(api_key: str, db: Session) -> User | _CachedUser:
+    """Validate an API key, using a short-lived cache to skip the DB when possible."""
+
+    cached_user_id = _api_key_user_cache.get(api_key)
+    if cached_user_id is not None:
+        return _CachedUser(user_id=cached_user_id)
+
+    user = verify_api_key(x_api_key=api_key, db=db)
+    _api_key_user_cache.set(api_key, user.user_id)
+    return user
 
 # One shared, connection-pooled client for all proxied traffic — avoids the
 # per-request socket/TLS handshake cost and lets the gateway scale to high
@@ -91,7 +120,7 @@ _STRIP_REQUEST_HEADERS = _HOP_BY_HOP | {
 def require_llm_access(
     x_api_key: str = Header(default=None),
     db: Session = Depends(get_db),
-) -> User | None:
+) -> User | _CachedUser | None:
     """Gate the proxied LLM routes with the gateway's API-key management.
 
     When llm_require_api_key is True, a valid X-API-Key (mapped to a User) is
@@ -105,7 +134,7 @@ def require_llm_access(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing API key. Send your gateway key in the X-API-Key header.",
         )
-    return verify_api_key(x_api_key=x_api_key, db=db)
+    return _resolve_user_by_api_key(x_api_key, db)
 
 
 def _save_chat_messages(
@@ -221,10 +250,17 @@ async def _proxy(request: Request, upstream_path: str) -> StreamingResponse:
     )
 
 
-def _enforce_rate_limit(user: User | None, label: str, db: Session) -> None:
-    """Per-user rate limit on the model (skipped when keyless or disabled)."""
+def _enforce_rate_limit(user: "User | _CachedUser | None", label: str, db: Session) -> None:
+    """Per-user rate limit on the model (skipped when keyless or disabled).
+
+    Uses the in-memory limiter, not the DB-backed one: this subsystem (chat +
+    translate) always passes label="llm", and the DB round-trip for two extra
+    queries (RPM + RPD) per request was a major contributor to live-translate
+    latency given Postgres's cross-region distance from this gateway. See
+    check_rate_limit_in_memory()'s docstring for the persistence trade-off.
+    """
     if user and settings.llm_rate_limit_enabled:
-        check_rate_limit(user.user_id, label, db)
+        check_rate_limit_in_memory(user.user_id, label)
 
 
 # Catch-all proxy: every /api/* and /v1/* route on the LLM service is forwarded,
@@ -401,7 +437,9 @@ async def ws_translate_proxy(websocket: WebSocket):
             return
         db = SessionLocal()
         try:
-            user = db.query(User).filter(User.api_key == api_key).first()
+            user = _resolve_user_by_api_key(api_key, db)
+        except HTTPException:
+            user = None
         finally:
             db.close()
         if not user:
