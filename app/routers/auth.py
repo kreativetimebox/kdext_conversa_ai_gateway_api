@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.user import User
 from app.schemas.auth import SignupRequest, LoginRequest, TokenResponse
 from app.core.security import (
@@ -105,8 +105,30 @@ def verify_otp(body: OTPVerifyRequest, db: Session = Depends(get_db)):
     db.commit()
 
     return OTPVerifyResponse(message="Email verified successfully.", verified=True)
+def _record_login_time(user_id: int) -> None:
+    """Stamp the user's last-login time in its own session.
+
+    Runs AFTER the response is sent (FastAPI BackgroundTasks). The DB is
+    cross-region, so this write is a full ~300ms round-trip — keeping it off
+    the login critical path is the single biggest win for perceived login
+    latency. login_time is only shown as a "last login" field on /profile;
+    nothing gates behavior on it, so a slight delay/failure is harmless.
+    """
+    db = SessionLocal()
+    try:
+        db.query(User).filter(User.user_id == user_id).update(
+            {User.login_time: datetime.now(timezone.utc)}
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(body: LoginRequest, background_tasks: BackgroundTasks,
+          db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.password):
         raise HTTPException(
@@ -118,11 +140,13 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified. Please verify your email with the OTP sent during signup."
         )
-    user.login_time = datetime.now(timezone.utc)
-    db.commit()
-    return TokenResponse(
+    # Build the token from data already in hand — no further DB reads — and
+    # defer the login_time write so it doesn't block the response.
+    token = TokenResponse(
         access_token=create_access_token(user.user_id),
         token_type="bearer",
         api_key=user.api_key,
         expires_in=settings.jwt_expires,
     )
+    background_tasks.add_task(_record_login_time, user.user_id)
+    return token
