@@ -512,6 +512,209 @@ async def ws_translate_proxy(websocket: WebSocket):
             pass
 
 
+# ── Live voice-translation WebSocket ─────────────────────────────────────────
+# Bridges the browser's microphone to the STT engine + LLM translation pipeline.
+#
+# Flow:
+#   1. Client opens WS, sends {"type":"config", "target_lang":"es"} once.
+#   2. Client streams binary audio chunks (MediaRecorder/webm, ~2 s each).
+#   3. Gateway POSTs each chunk to the STT service (/api/voice/stt).
+#   4. STT transcript is forwarded over the upstream /ws/translate connection.
+#   5. Translation delta/done frames stream back to the browser in real-time.
+#
+# Client receives:
+#   {"type":"transcript","text":"Hello world"}      – what STT heard
+#   {"type":"delta","content":"Hola ","id":N}       – streaming translation token
+#   {"type":"done","translation":"Hola mundo","id":N}
+#   {"type":"error","message":"..."}
+
+
+@router.websocket("/ws/voice-translate")
+async def ws_voice_translate(websocket: WebSocket):
+    """Live voice-translation: mic audio → STT → streaming translate."""
+    await websocket.accept()
+
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    if settings.llm_require_api_key:
+        api_key = (
+            websocket.query_params.get("api_key")
+            or websocket.headers.get("x-api-key")
+        )
+        if not api_key:
+            await websocket.close(code=4401, reason="Missing API key")
+            return
+        db = SessionLocal()
+        try:
+            user = _resolve_user_by_api_key(api_key, db)
+        except HTTPException:
+            user = None
+        finally:
+            db.close()
+        if not user:
+            await websocket.close(code=4401, reason="Invalid API key")
+            return
+    else:
+        user = None
+
+    if settings.llm_rate_limit_enabled and user:
+        try:
+            check_rate_limit_in_memory(user.user_id, "llm")
+        except HTTPException as exc:
+            await websocket.send_text(
+                f'{{"type":"error","message":"{exc.detail}"}}'
+            )
+            await websocket.close(code=1008, reason="Rate limit exceeded")
+            return
+
+    try:
+        import websockets as _ws_lib
+    except ImportError:
+        logger.error("ws_voice_translate: websockets package not installed")
+        await websocket.close(code=1011, reason="websockets package not installed")
+        return
+
+    # ── Connect to upstream translate WebSocket ───────────────────────────────
+    upstream_url = _ws_upstream_url()
+    try:
+        upstream = await _ws_lib.connect(
+            upstream_url, max_size=2 ** 20, open_timeout=10
+        )
+    except Exception as exc:
+        # Try the alternate URL shape (same fallback logic as ws_translate_proxy)
+        alt_url = upstream_url
+        if "/ws/translate" in upstream_url:
+            alt_url = upstream_url.replace("/ws/translate", "/api/translate/ws")
+        elif "/api/translate/ws" in upstream_url:
+            alt_url = upstream_url.replace("/api/translate/ws", "/ws/translate")
+        try:
+            upstream = await _ws_lib.connect(
+                alt_url, max_size=2 ** 20, open_timeout=10
+            )
+        except Exception as exc2:
+            logger.error(
+                "ws_voice_translate: upstream unreachable — %s / %s", exc, exc2
+            )
+            await websocket.close(code=1011, reason="Translation service unreachable")
+            return
+
+    # STT service: prefer the LLM service proxy route so it works the same as
+    # the existing /api/voice/stt proxy in chatbot.py.
+    stt_url = f"{LLM_SERVICE_URL}/api/voice/stt"
+    stt_headers: dict[str, str] = {}
+    if LLM_SERVICE_API_KEY:
+        stt_headers["X-Service-Key"] = LLM_SERVICE_API_KEY
+
+    target_lang = "en"   # will be updated on first config frame
+    seq = 0
+    client = _get_client()
+
+    async def _send_audio_chunk(audio_bytes: bytes) -> None:
+        """POST a raw audio chunk to the STT service, forward transcript to upstream."""
+        nonlocal seq, target_lang
+        try:
+            import httpx as _httpx
+            files = {"file": ("chunk.webm", audio_bytes, "audio/webm")}
+            resp = await client.post(stt_url, files=files, headers=stt_headers, timeout=30)
+            if not resp.is_success:
+                logger.warning("STT returned %s for voice chunk", resp.status_code)
+                return
+
+            data = resp.json()
+            # LLM-service STT: {"text": "...", "language": "..."}
+            # Gateway STT:     {"detail": "...", "request_id": ...}
+            transcript = (
+                data.get("text")
+                or data.get("detail")
+                or data.get("transcript")
+                or ""
+            )
+            if not transcript or not transcript.strip():
+                return
+
+            # Echo transcript to client so the source panel updates
+            await websocket.send_text(
+                f'{{"type":"transcript","text":{__import__("json").dumps(transcript)}}}'
+            )
+
+            # Forward to upstream translate WS
+            seq += 1
+            payload = __import__("json").dumps({
+                "type": "translate",
+                "id": seq,
+                "text": transcript.strip(),
+                "target_lang": target_lang,
+                "engine": "llm",
+            })
+            await upstream.send(payload)
+
+        except Exception as exc:
+            logger.warning("voice-translate chunk error: %s", exc)
+            try:
+                await websocket.send_text(
+                    f'{{"type":"error","message":"Chunk processing failed: {exc}"}}'
+                )
+            except Exception:
+                pass
+
+    async def _pump_upstream_to_client() -> None:
+        """Forward translation delta/done/error frames from upstream to client."""
+        try:
+            async for message in upstream:
+                if isinstance(message, bytes):
+                    await websocket.send_bytes(message)
+                else:
+                    await websocket.send_text(message)
+        except Exception:
+            pass
+
+    async def _pump_client_to_upstream() -> None:
+        """Read mic audio chunks / control frames from the browser."""
+        nonlocal target_lang
+        import json as _json
+        while True:
+            message = await websocket.receive()
+            msg_type = message.get("type")
+
+            if msg_type == "websocket.disconnect":
+                break
+
+            if msg_type == "websocket.receive":
+                binary = message.get("bytes")
+                text = message.get("text")
+
+                if binary:
+                    # Raw audio chunk — send to STT → translate
+                    asyncio.create_task(_send_audio_chunk(binary))
+
+                elif text:
+                    try:
+                        frame = _json.loads(text)
+                    except ValueError:
+                        continue
+
+                    if frame.get("type") == "config":
+                        target_lang = frame.get("target_lang", target_lang)
+                    elif frame.get("type") == "ping":
+                        await websocket.send_text('{"type":"pong"}')
+                    # Ignore other text frames
+
+    pump_down = asyncio.create_task(_pump_upstream_to_client())
+    try:
+        await _pump_client_to_upstream()
+    except Exception as exc:
+        logger.info("ws_voice_translate client loop ended: %s", exc)
+    finally:
+        pump_down.cancel()
+        try:
+            await upstream.close()
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
 @router.api_route(
     "/v1/{path:path}",
     methods=["GET", "POST"],
