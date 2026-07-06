@@ -1,10 +1,10 @@
 """Job polling endpoint — check async job status."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.core.dependencies import verify_api_key
+from app.core.dependencies import verify_api_key_cached
 from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.models.stt import SpeechToText
@@ -30,19 +30,26 @@ def _live_queue_position(db: Session, model, job) -> int | None:
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 def get_job_status(job_id: int,
-                   user: User = Depends(verify_api_key),
+                   type: str | None = Query(default=None, pattern="^(tts|stt)$"),
+                   user: User = Depends(verify_api_key_cached),
                    db: Session = Depends(get_db)):
     """Poll the status of an async TTS or STT job.
 
     Returns the current status and result (if completed).
     Users can only access their own jobs.
+
+    Pass ?type=tts or ?type=stt to skip the lookup in the other job table —
+    the DB is cross-region, so each extra query is a full network round-trip
+    and this endpoint is polled in a tight loop.
     """
-    # Try TTS first
-    tts_job = (
-        db.query(TextToSpeech)
-        .filter(TextToSpeech.request_id == job_id, TextToSpeech.user_id == user.user_id)
-        .first()
-    )
+    # Try TTS first (unless the caller said the job is STT)
+    tts_job = None
+    if type != "stt":
+        tts_job = (
+            db.query(TextToSpeech)
+            .filter(TextToSpeech.request_id == job_id, TextToSpeech.user_id == user.user_id)
+            .first()
+        )
     if tts_job:
         return JobStatusResponse(
             job_id=tts_job.request_id,
@@ -59,12 +66,14 @@ def get_job_status(job_id: int,
             updated_at=tts_job.completed_at,
         )
 
-    # Try STT
-    stt_job = (
-        db.query(SpeechToText)
-        .filter(SpeechToText.request_id == job_id, SpeechToText.user_id == user.user_id)
-        .first()
-    )
+    # Try STT (unless the caller said the job is TTS)
+    stt_job = None
+    if type != "tts":
+        stt_job = (
+            db.query(SpeechToText)
+            .filter(SpeechToText.request_id == job_id, SpeechToText.user_id == user.user_id)
+            .first()
+        )
     if stt_job:
         return JobStatusResponse(
             job_id=stt_job.request_id,

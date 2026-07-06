@@ -95,13 +95,24 @@ def check_rate_limit(user_id: int, endpoint: str, db: Session) -> None:
     rpm_limit = settings.rate_limit_rpm
     rpd_limit = settings.rate_limit_rpd
 
-    # ── Per-minute check ──────────────────────────────────────
-    rpm_record = db.query(RateLimit).filter(
+    # Fetch BOTH window records in one query — the DB is cross-region, so two
+    # separate SELECTs paid two full network round-trips per request.
+    from sqlalchemy import and_, or_
+    records = db.query(RateLimit).filter(
         RateLimit.user_id == user_id,
         RateLimit.endpoint == endpoint,
-        RateLimit.window_minute == window_minute,
-    ).first()
+        or_(
+            RateLimit.window_minute == window_minute,
+            and_(RateLimit.window_day == window_day, RateLimit.window_minute == "day"),
+        ),
+    ).all()
+    rpm_record = next((r for r in records if r.window_minute == window_minute), None)
+    rpd_record = next(
+        (r for r in records if r.window_minute == "day" and r.window_day == window_day),
+        None,
+    )
 
+    # ── Per-minute check ──────────────────────────────────────
     if rpm_record:
         if rpm_record.rpm_count >= rpm_limit:
             raise HTTPException(
@@ -121,13 +132,6 @@ def check_rate_limit(user_id: int, endpoint: str, db: Session) -> None:
         db.add(rpm_record)
 
     # ── Per-day check ─────────────────────────────────────────
-    rpd_record = db.query(RateLimit).filter(
-        RateLimit.user_id == user_id,
-        RateLimit.endpoint == endpoint,
-        RateLimit.window_day == window_day,
-        RateLimit.window_minute == "day",
-    ).first()
-
     if rpd_record:
         if rpd_record.rpd_count >= rpd_limit:
             raise HTTPException(

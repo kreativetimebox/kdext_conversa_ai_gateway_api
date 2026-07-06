@@ -1,9 +1,10 @@
+import asyncio
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.core.dependencies import verify_api_key
+from app.core.dependencies import verify_api_key_cached
 from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.schemas.tts import TTSRequest
@@ -45,7 +46,7 @@ async def list_voices():
 
 @router.post("/text-to-speech")
 async def text_to_speech(body: TTSRequest,
-                         user: User = Depends(verify_api_key),
+                         user: User = Depends(verify_api_key_cached),
                          db: Session = Depends(get_db)):
     # Rate-limit before creating any job row — applies to sync AND async mode.
     check_rate_limit(user.user_id, "tts", db)
@@ -70,13 +71,18 @@ async def text_to_speech(body: TTSRequest,
             queue_position=queue_pos,
         )
         db.add(job)
+        # flush assigns the PK without ending the transaction; capture it now
+        # so no post-commit refresh round-trip is needed.
+        db.flush()
+        job_id = job.request_id
         db.commit()
-        db.refresh(job)
 
         try:
-            send_job(
+            # boto3 is sync — run in a thread so the event loop stays free.
+            await asyncio.to_thread(
+                send_job,
                 queue_url=settings.aws_sqs_tts_queue_url,
-                job_id=job.request_id,
+                job_id=job_id,
                 job_type="tts",
                 payload={
                     "text": body.text,
@@ -99,7 +105,7 @@ async def text_to_speech(body: TTSRequest,
                 detail=f"Failed to enqueue job: {str(exc)}"
             )
         return {
-            "job_id": job.request_id,
+            "job_id": job_id,
             "status": "queued",
             "queue_position": queue_pos,
             "message": "Job submitted. Poll GET /jobs/{job_id} for status.",
@@ -117,28 +123,36 @@ async def text_to_speech(body: TTSRequest,
         webhook_url=body.webhook_url,
     )
     db.add(job)
+    db.flush()
+    request_id = job.request_id
     db.commit()
-    db.refresh(job)
 
     start = time.perf_counter()
     try:
         audio_bytes = await synthesize(body.text, body.voice, body.format)
-        audio_url = save_audio(f"tts/{job.request_id}.{body.format}", audio_bytes)
+        # boto3 is sync — run in a thread so the event loop stays free. The
+        # generated audio is served from S3 via audio_url; storing the bytes in
+        # the cross-region DB as well was pure added latency, so it's skipped.
+        audio_url = await asyncio.to_thread(
+            save_audio, f"tts/{request_id}.{body.format}", audio_bytes
+        )
 
         job.audio_url = audio_url
-        job.audio_bytes = audio_bytes
         job.processing_time = round(time.perf_counter() - start, 3)
         job.completed_at = datetime.now(timezone.utc)
         job.status = "completed"
         increment_success(user.user_id, db)
-        db.commit()
-        return {
-            "request_id": job.request_id,
+        # Read response fields BEFORE commit — afterwards they're expired and
+        # each access would trigger a refresh round-trip to the remote DB.
+        response = {
+            "request_id": request_id,
             "audio_url": audio_url,
             "detail": job.input_text,
             "processing_time": job.processing_time,
             "current_time": job.created_at,
         }
+        db.commit()
+        return response
     except Exception as exc:
         # Mark the job as failed so the DB never shows status=completed with NULL results.
         db.rollback()
