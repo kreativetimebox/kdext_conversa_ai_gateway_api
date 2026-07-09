@@ -429,11 +429,15 @@ async def voice_stt_fast(
 
     client = _get_client()
     try:
+        # Live chunks are ~2s of audio; a healthy engine answers in well under
+        # a second. Don't inherit the shared client's 120s LLM timeout — a
+        # hung chunk would pin the UI's in-flight slot and stall the stream.
         resp = await client.post(
             url,
             files={"file": (filename, data, content_type)},
             data=form,
             headers=headers,
+            timeout=httpx.Timeout(15.0, connect=5.0),
         )
     except httpx.RequestError as exc:
         logger.error("voice_stt_fast: engine unreachable at %s — %s", url, exc)
