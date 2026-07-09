@@ -25,9 +25,12 @@ import httpx
 from fastapi import (
     APIRouter,
     Depends,
+    File,
+    Form,
     Header,
     HTTPException,
     Request,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status,
@@ -387,6 +390,71 @@ async def proxy_chat(
         headers=resp_headers,
         media_type=upstream.headers.get("content-type"),
     )
+
+
+# ── Live voice STT — straight to the STT engine ──────────────────────────────
+# Live voice translation posts a mic chunk every ~2 seconds. Routing each one
+# UI → gateway → LLM service → STT engine spent a whole extra proxy hop per
+# chunk just to reach an engine whose address the gateway already knows
+# (STT_ENGINE_URL). This route calls the engine directly and asks it to skip
+# word-timestamp alignment (timestamps=false) — a large slice of CPU inference
+# time that subtitles never use. Response shape matches the LLM-service proxy
+# ({text, language, words}) so clients need no changes, and an engine that
+# doesn't know the `timestamps` field yet simply ignores it.
+# MUST be defined BEFORE the /api/{path:path} catch-all to win the route match.
+@router.post("/api/voice/stt")
+async def voice_stt_fast(
+    file: UploadFile = File(...),
+    language: str | None = Form(default=None),
+    user=Depends(require_llm_access),
+    db: Session = Depends(get_db),
+):
+    _enforce_rate_limit(user, "llm", db)
+    data = await file.read()
+    filename = file.filename or "chunk.webm"
+    content_type = file.content_type or "audio/webm"
+
+    form: dict[str, str] = {"timestamps": "false"}
+    if language:
+        form["language"] = language
+
+    headers: dict[str, str] = {}
+    if settings.stt_engine_url:
+        url = f"{settings.stt_engine_url.rstrip('/')}{settings.stt_engine_path}"
+    else:
+        # No direct engine configured — fall back to the LLM-service hop.
+        url = f"{LLM_SERVICE_URL}/api/voice/stt"
+        if LLM_SERVICE_API_KEY:
+            headers["X-Service-Key"] = LLM_SERVICE_API_KEY
+
+    client = _get_client()
+    try:
+        resp = await client.post(
+            url,
+            files={"file": (filename, data, content_type)},
+            data=form,
+            headers=headers,
+        )
+    except httpx.RequestError as exc:
+        logger.error("voice_stt_fast: engine unreachable at %s — %s", url, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"STT engine unreachable: {exc}",
+        )
+
+    if resp.status_code != 200:
+        logger.warning("voice_stt_fast: engine returned %s", resp.status_code)
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=resp.text[:300] or "STT engine error",
+        )
+
+    payload = resp.json()
+    return {
+        "text": payload.get("text", ""),
+        "language": payload.get("language"),
+        "words": payload.get("words", []),
+    }
 
 
 @router.api_route(
