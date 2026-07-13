@@ -40,6 +40,9 @@ class DocumentChatIn(BaseModel):
 
     question: str = Field(min_length=1)
     stream: bool = True
+    # False = the client saves the exchange itself via /conversations (same
+    # contract as the x-client-persist header on /api/chat).
+    persist: bool = True
     # Continue an existing gateway conversation (ownership verified at save time).
     conversation_id: int | None = None
     # Optional prior turns so the LLM keeps multi-question context. The document

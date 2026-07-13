@@ -400,7 +400,7 @@ async def chat_with_document(
             detail=f"LLM service unreachable: {exc}",
         )
 
-    user_id = user.user_id if user else None
+    user_id = user.user_id if (user and body.persist) else None
     response_chunks: list[bytes] = []
 
     async def stream_and_save():
