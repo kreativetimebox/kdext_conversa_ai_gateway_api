@@ -429,10 +429,17 @@ async def chat_with_document(
 
     client = _get_client()
     try:
+        # Mirror the exact body shape the chat UI sends to /api/chat (the only
+        # request shape verified against the live LLM service).
         upstream_req = client.build_request(
             "POST",
             f"{LLM_SERVICE_URL}/api/chat",
-            content=json.dumps({"messages": messages, "stream": body.stream}),
+            content=json.dumps({
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 2048,
+                "stream": body.stream,
+            }),
             headers=fwd_headers,
         )
         upstream = await client.send(upstream_req, stream=True)
@@ -493,6 +500,11 @@ async def chat_with_document(
         k: v for k, v in upstream.headers.items()
         if k.lower() in ("content-type", "cache-control", "x-accel-buffering")
     }
+    # /documents/* is a new path for the reverse proxy in front of the gateway —
+    # force SSE-friendly behavior so nginx doesn't buffer the stream into one
+    # late burst (the /api/chat location is already tuned; this one isn't).
+    resp_headers["X-Accel-Buffering"] = "no"
+    resp_headers.setdefault("Cache-Control", "no-cache")
     return StreamingResponse(
         stream_and_save(),
         status_code=upstream.status_code,
