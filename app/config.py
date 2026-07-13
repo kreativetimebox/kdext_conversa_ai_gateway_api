@@ -71,7 +71,11 @@ class Settings(BaseSettings):
     # Scanned text is cached in-process so follow-up questions don't re-hit OCR.
     document_cache_ttl_seconds: float = 900.0
     # Hard cap on document characters injected into the LLM prompt.
-    max_document_context_chars: int = 60_000
+    max_document_context_chars: int = 24_000
+    # Context window of the deployed LLM engine (tokens). Document text and
+    # history are budgeted to fit prompt + answer inside this — the engine
+    # hard-rejects any request that would overflow it.
+    llm_context_tokens: int = 8192
 
     # Voice engines
     tts_engine_url: str = "http://localhost:8000"

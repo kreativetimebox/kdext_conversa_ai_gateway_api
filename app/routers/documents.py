@@ -19,6 +19,7 @@ the payload defensively: it tries a priority list of well-known text keys
 results, instead of assuming one fixed schema.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -323,7 +324,43 @@ async def forget_document(
     _document_cache.invalidate(request_id)
 
 
-def _document_question_prompt(request_id: str, doc: dict, question: str) -> str:
+# ── Context-window budgeting ──────────────────────────────────────────────────
+# The deployed engine hard-rejects prompt + max_tokens > llm_context_tokens
+# ("This model's maximum context length is 8192 tokens..."), so everything
+# sent must be budgeted. OCR text is number/punctuation-heavy and tokenizes
+# poorly — 3 chars/token is the safe estimate (4 underestimates real usage).
+_CHARS_PER_TOKEN = 3
+_MIN_OUTPUT_TOKENS = 512    # always leave room for a useful answer
+_OVERHEAD_TOKENS = 300      # LLM-service system prompt + chat template + instructions
+_MAX_HISTORY_TOKENS = 1500  # prior turns beyond this are dropped (oldest first)
+# Documents too big for one request are map-reduced: each chunk is scanned for
+# question-relevant info in its own LLM call, then one final call synthesizes
+# the streamed answer — so the WHOLE document is read, at any size (up to the
+# chunk cap, which bounds latency).
+_MAX_CHUNKS = 6
+_CHUNK_ANSWER_TOKENS = 400  # per-chunk extraction output budget
+
+
+def _estimate_tokens(text: str) -> int:
+    return len(text or "") // _CHARS_PER_TOKEN + 1
+
+
+def _budget_history(history: list[dict]) -> list[dict]:
+    """Keep the most recent prior turns that fit the history token budget."""
+    kept: list[dict] = []
+    used = 0
+    for msg in reversed(history):
+        cost = _estimate_tokens(msg["content"])
+        if used + cost > _MAX_HISTORY_TOKENS:
+            break
+        kept.append(msg)
+        used += cost
+    return list(reversed(kept))
+
+
+def _document_question_prompt(
+    request_id: str, doc: dict, question: str, max_doc_chars: int
+) -> str:
     """Document + instructions + question as ONE user message.
 
     Deliberately NOT a system-role message: the deployed LLM service streams
@@ -332,13 +369,19 @@ def _document_question_prompt(request_id: str, doc: dict, question: str) -> str:
     shape the main chat UI always sends, works). So the document context is
     folded into the user turn instead.
     """
-    text = doc["text"][: settings.max_document_context_chars]
+    text = doc["text"][: min(max_doc_chars, settings.max_document_context_chars)]
+    truncated = len(text) < len(doc["text"])
     name = doc["filename"] or request_id
     return (
         f"I have attached a scanned document named '{name}'. Answer my question "
         "using ONLY the document content below — everything the OCR scan "
         "extracted from it. If the answer is not present in the document, say "
-        "so plainly instead of guessing. Quote the document where it helps.\n\n"
+        "so plainly instead of guessing. Quote the document where it helps."
+        + (
+            " (Note: the document was truncated to fit the model's context limit.)"
+            if truncated else ""
+        )
+        + "\n\n"
         "--- DOCUMENT CONTENT START ---\n"
         f"{text}\n"
         "--- DOCUMENT CONTENT END ---\n\n"
@@ -409,6 +452,104 @@ def _save_document_chat(
         db.close()
 
 
+async def _complete_chat_once(messages: list[dict], max_tokens: int) -> str:
+    """One non-streaming /api/chat call; returns the assistant text ('' on failure)."""
+    headers = {"Content-Type": "application/json"}
+    if LLM_SERVICE_API_KEY:
+        headers["X-Service-Key"] = LLM_SERVICE_API_KEY
+    client = _get_client()
+    try:
+        resp = await client.post(
+            f"{LLM_SERVICE_URL}/api/chat",
+            content=json.dumps({
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }),
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            logger.warning("chunk scan: LLM returned %s: %s", resp.status_code, resp.text[:200])
+            return ""
+        data = resp.json()
+        choices = data.get("choices", [])
+        return choices[0].get("message", {}).get("content", "") if choices else ""
+    except Exception as exc:
+        logger.warning("chunk scan call failed: %s", exc)
+        return ""
+
+
+async def _scan_document_chunks(doc: dict, question: str, name: str) -> list[str]:
+    """Map step: run each document chunk through the LLM to extract everything
+    relevant to the question. The whole document is read regardless of size
+    (up to _MAX_CHUNKS × chunk size — beyond that the tail is dropped and the
+    synthesis prompt says so)."""
+    chunk_budget_tokens = (
+        settings.llm_context_tokens
+        - _OVERHEAD_TOKENS
+        - _CHUNK_ANSWER_TOKENS
+        - _estimate_tokens(question)
+        - 150  # per-chunk instructions
+    )
+    chunk_chars = max(chunk_budget_tokens * _CHARS_PER_TOKEN, 1000)
+    text = doc["text"]
+    chunks = [text[i: i + chunk_chars] for i in range(0, len(text), chunk_chars)]
+    dropped = max(0, len(chunks) - _MAX_CHUNKS)
+    chunks = chunks[:_MAX_CHUNKS]
+    logger.info(
+        "document map-reduce: %d chars → %d chunks (%d dropped)",
+        len(text), len(chunks), dropped,
+    )
+
+    # Two at a time — enough parallelism to cut latency without flooding the GPU.
+    sem = asyncio.Semaphore(2)
+
+    async def scan(idx: int, chunk: str) -> str:
+        prompt = (
+            f"Below is part {idx + 1} of {len(chunks)} of a scanned document "
+            f"named '{name}'. Extract every piece of information from it that "
+            f"is relevant to this question: \"{question}\". Quote exact values "
+            "and numbers. If nothing in this part is relevant, reply with "
+            "exactly: NONE\n\n"
+            f"{chunk}"
+        )
+        async with sem:
+            return await _complete_chat_once(
+                [{"role": "user", "content": prompt}], _CHUNK_ANSWER_TOKENS
+            )
+
+    results = await asyncio.gather(*(scan(i, c) for i, c in enumerate(chunks)))
+    notes = [
+        r.strip() for r in results
+        if r and r.strip() and r.strip().upper() not in ("NONE", "NONE.")
+    ]
+    if dropped:
+        notes.append(
+            f"(Note: the document was longer than {_MAX_CHUNKS} parts; "
+            f"{dropped} trailing part(s) could not be scanned.)"
+        )
+    return notes
+
+
+def _synthesis_prompt(name: str, question: str, notes: list[str]) -> str:
+    """Reduce step: combine per-chunk extracts into the final answer prompt."""
+    joined = "\n\n".join(f"[Extract {i + 1}]\n{n}" for i, n in enumerate(notes))
+    # Guard the synthesis prompt itself against overflow.
+    max_notes_chars = (
+        settings.llm_context_tokens - _OVERHEAD_TOKENS - _MIN_OUTPUT_TOKENS - 200
+    ) * _CHARS_PER_TOKEN
+    joined = joined[:max_notes_chars]
+    return (
+        f"I asked this question about a scanned document named '{name}': "
+        f"\"{question}\"\n\n"
+        "The document was scanned in parts; below is every relevant extract "
+        "found. Answer my question using ONLY these extracts. If they don't "
+        "contain the answer, say so plainly instead of guessing.\n\n"
+        f"{joined}"
+    )
+
+
 @router.post("/{request_id}/chat")
 async def chat_with_document(
     request_id: str,
@@ -428,11 +569,41 @@ async def chat_with_document(
 
     doc, _ = await _fetch_document(request_id)
 
-    messages = [m.model_dump() for m in body.history]
-    messages.append({
-        "role": "user",
-        "content": _document_question_prompt(request_id, doc, body.question),
-    })
+    # Fit everything inside the engine's context window: recent history +
+    # instructions + document + question + answer room.
+    history = _budget_history([m.model_dump() for m in body.history])
+    history_tokens = sum(_estimate_tokens(m["content"]) for m in history)
+    available_doc_tokens = (
+        settings.llm_context_tokens
+        - history_tokens
+        - _estimate_tokens(body.question)
+        - _OVERHEAD_TOKENS
+        - _MIN_OUTPUT_TOKENS
+    )
+    name = doc["filename"] or request_id
+
+    if _estimate_tokens(doc["text"]) > available_doc_tokens:
+        # Document doesn't fit in one request — map-reduce: scan every chunk
+        # for question-relevant info, then answer from the combined extracts.
+        # The whole document is read; nothing is silently cut.
+        notes = await _scan_document_chunks(doc, body.question, name)
+        if not notes:
+            notes = ["(No relevant information was found in any part of the document.)"]
+        user_content = _synthesis_prompt(name, body.question, notes)
+    else:
+        max_doc_chars = max(available_doc_tokens * _CHARS_PER_TOKEN, 400)
+        user_content = _document_question_prompt(
+            request_id, doc, body.question, max_doc_chars
+        )
+
+    messages = list(history)
+    messages.append({"role": "user", "content": user_content})
+
+    prompt_tokens = sum(_estimate_tokens(m["content"]) for m in messages)
+    max_tokens = min(
+        1024,
+        max(128, settings.llm_context_tokens - prompt_tokens - _OVERHEAD_TOKENS),
+    )
 
     fwd_headers = {"Content-Type": "application/json"}
     if LLM_SERVICE_API_KEY:
@@ -448,7 +619,7 @@ async def chat_with_document(
             content=json.dumps({
                 "messages": messages,
                 "temperature": 0.7,
-                "max_tokens": 2048,
+                "max_tokens": max_tokens,
                 "stream": body.stream,
             }),
             headers=fwd_headers,
