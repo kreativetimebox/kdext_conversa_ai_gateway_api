@@ -21,6 +21,7 @@ results, instead of assuming one fixed schema.
 
 import json
 import logging
+import re
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -76,6 +77,7 @@ _TEXT_KEYS = (
 _FILENAME_KEYS = ("filename", "file_name", "original_filename", "document_name", "name")
 _STATUS_KEYS = ("status", "state")
 _PENDING_STATUSES = {"pending", "queued", "processing", "running", "in_progress"}
+_FAILED_STATUSES = {"failed", "error", "cancelled"}
 
 
 def _collect_key(node, key: str, out: list[str]) -> None:
@@ -161,6 +163,44 @@ def extract_document(payload) -> dict:
     }
 
 
+def extract_document_from_text(raw: str) -> dict:
+    """Parse the OCR service's plain-text response format.
+
+    The live API (verified 2026-07-13) returns text/plain in a compact
+    "key: value" style with indented nested blocks, e.g.:
+
+        request_id: req_...
+        status: completed
+        filename: invoice.pdf
+        formatted_result:
+          supplierName: Perth Garage Ltd
+          totalAmount: 150.82
+          ...
+        document_url: "https://...presigned..."
+
+    The whole body IS the scanned content in LLM-readable form, so it is used
+    verbatim as the document text — minus the presigned document_url line,
+    which is token noise and a signed link the model has no business seeing.
+    """
+    def _field(name: str) -> str | None:
+        m = re.search(rf"^{name}:[ \t]*(.+)$", raw, re.MULTILINE)
+        if not m:
+            return None
+        value = m.group(1).strip().strip('"')
+        return value if value and value.lower() not in ("null", "unknown", "none") else None
+
+    text_lines = [
+        line for line in raw.splitlines()
+        if not line.lstrip().startswith("document_url:")
+    ]
+    return {
+        "text": "\n".join(text_lines).strip(),
+        "status": (_field("status") or "completed").lower(),
+        "filename": _field("filename"),
+        "pages": None,
+    }
+
+
 # ── OCR service fetch ─────────────────────────────────────────────────────────
 
 
@@ -204,24 +244,26 @@ async def _fetch_document(request_id: str, refresh: bool = False) -> tuple[dict,
             detail=f"OCR service error ({resp.status_code}): {resp.text[:300]}",
         )
 
+    # The live OCR API answers in a compact plain-text "key: value" format
+    # (content-type text/plain); a JSON body is handled too in case the
+    # service changes. Try JSON first, fall back to the text parser.
     try:
-        payload = resp.json()
+        doc = extract_document(resp.json())
     except ValueError:
+        doc = extract_document_from_text(resp.text)
+
+    if doc["status"] in _PENDING_STATUSES:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="OCR service returned a non-JSON response",
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document is not ready yet (status: {doc['status']}). "
+                   "Retry once the OCR scan completes.",
         )
-
-    doc = extract_document(payload)
-
+    if doc["status"] in _FAILED_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"OCR scan failed for this document (status: {doc['status']})",
+        )
     if not doc["text"]:
-        # No text yet — distinguish "still scanning" from "scanned but empty".
-        if doc["status"] in _PENDING_STATUSES:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Document is not ready yet (status: {doc['status']}). "
-                       "Retry once the OCR scan completes.",
-            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="OCR scan contains no extractable text for this document",
