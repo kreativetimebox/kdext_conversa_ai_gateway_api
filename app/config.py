@@ -63,8 +63,10 @@ class Settings(BaseSettings):
     # scanned document by its OCR request_id; the gateway pulls the scanned
     # content from this service and feeds it to the LLM as context.
     ocr_service_url: str = "https://apiocr.dexaitech.com"
-    # Optional auth for the OCR service (sent as X-API-Key + Bearer). Empty = none.
-    ocr_service_api_key: str = ""
+    # Auth for the OCR service (sent as X-API-Key + Bearer).
+    # TODO: hardcoded default for testing only — move to OCR_SERVICE_API_KEY env
+    # var on the deployed gateway and drop this default.
+    ocr_service_api_key: str = "sk_CNx1SRyFNdm60gmbe8QzgzrogKGd07sdxjBHjbbEJrI"
     ocr_service_timeout: float = 30.0
     # Scanned text is cached in-process so follow-up questions don't re-hit OCR.
     document_cache_ttl_seconds: float = 900.0
