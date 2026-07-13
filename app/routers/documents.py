@@ -323,18 +323,26 @@ async def forget_document(
     _document_cache.invalidate(request_id)
 
 
-def _document_system_prompt(request_id: str, doc: dict) -> str:
+def _document_question_prompt(request_id: str, doc: dict, question: str) -> str:
+    """Document + instructions + question as ONE user message.
+
+    Deliberately NOT a system-role message: the deployed LLM service streams
+    zero tokens when the conversation starts with a system turn (verified
+    2026-07-13 — the exact same request with user/assistant roles only, the
+    shape the main chat UI always sends, works). So the document context is
+    folded into the user turn instead.
+    """
     text = doc["text"][: settings.max_document_context_chars]
     name = doc["filename"] or request_id
     return (
-        "You are a document assistant. The user has attached a scanned document "
-        f"named '{name}'. Answer the user's questions using ONLY the document "
-        "content below — everything the OCR scan extracted from it. If the "
-        "answer is not present in the document, say so plainly instead of "
-        "guessing. Quote the document where it helps.\n\n"
+        f"I have attached a scanned document named '{name}'. Answer my question "
+        "using ONLY the document content below — everything the OCR scan "
+        "extracted from it. If the answer is not present in the document, say "
+        "so plainly instead of guessing. Quote the document where it helps.\n\n"
         "--- DOCUMENT CONTENT START ---\n"
         f"{text}\n"
-        "--- DOCUMENT CONTENT END ---"
+        "--- DOCUMENT CONTENT END ---\n\n"
+        f"My question: {question}"
     )
 
 
@@ -410,8 +418,9 @@ async def chat_with_document(
 ):
     """Answer a question from the scanned document via the LLM service.
 
-    The document text is injected server-side as a system prompt; the client
-    only ever sends the question (plus optional prior turns). The response is
+    The document text is injected server-side into the final user turn (see
+    _document_question_prompt for why not a system message); the client only
+    ever sends the question (plus optional prior turns). The response is
     the LLM service's own /api/chat shape — SSE stream when body.stream is
     true, JSON otherwise — so the UI can reuse its existing chat handling.
     """
@@ -419,9 +428,11 @@ async def chat_with_document(
 
     doc, _ = await _fetch_document(request_id)
 
-    messages = [{"role": "system", "content": _document_system_prompt(request_id, doc)}]
-    messages += [m.model_dump() for m in body.history]
-    messages.append({"role": "user", "content": body.question})
+    messages = [m.model_dump() for m in body.history]
+    messages.append({
+        "role": "user",
+        "content": _document_question_prompt(request_id, doc, body.question),
+    })
 
     fwd_headers = {"Content-Type": "application/json"}
     if LLM_SERVICE_API_KEY:
