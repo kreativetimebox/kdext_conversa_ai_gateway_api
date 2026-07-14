@@ -59,23 +59,6 @@ class Settings(BaseSettings):
     rate_limit_rpm: int = 50
     rate_limit_rpd: int = 1000
 
-    # OCR document service — "chat with a document" feature. The UI references a
-    # scanned document by its OCR request_id; the gateway pulls the scanned
-    # content from this service and feeds it to the LLM as context.
-    ocr_service_url: str = "https://apiocr.dexaitech.com"
-    # Auth for the OCR service (sent as X-API-Key + Bearer).
-    # TODO: hardcoded default for testing only — move to OCR_SERVICE_API_KEY env
-    # var on the deployed gateway and drop this default.
-    ocr_service_api_key: str = "sk_CNx1SRyFNdm60gmbe8QzgzrogKGd07sdxjBHjbbEJrI"
-    ocr_service_timeout: float = 30.0
-    # Scanned text is cached in-process so follow-up questions don't re-hit OCR.
-    document_cache_ttl_seconds: float = 900.0
-    # Hard cap on document characters injected into the LLM prompt.
-    max_document_context_chars: int = 24_000
-    # Context window of the deployed LLM engine (tokens). Document text and
-    # history are budgeted to fit prompt + answer inside this — the engine
-    # hard-rejects any request that would overflow it.
-    llm_context_tokens: int = 8192
 
     # Voice engines
     tts_engine_url: str = "http://localhost:8000"
