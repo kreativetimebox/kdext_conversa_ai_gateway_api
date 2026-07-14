@@ -12,7 +12,7 @@ from app.database import Base, engine, SessionLocal
 from app.models import rate_limit  # noqa: F401 — registers table
 from app.models import error_log  # noqa: F401 — registers table
 from app.models import conversation  # noqa: F401 — registers conversations + chat_messages
-from app.routers import auth, profile, tts, stt, jobs, chatbot, history, documents
+from app.routers import auth, profile, tts, stt, jobs, chatbot, history
 from app.config import get_settings
 from app.core.logging import configure_logging
 from app.services.error_logger import log_error
@@ -118,10 +118,6 @@ app.include_router(jobs.router)
 # Registered BEFORE the proxy so its routes are matched first (it lives at root,
 # not /api, so there is no collision anyway).
 app.include_router(history.router)
-
-# Document chat (/documents/*) — reference an OCR-scanned document by request
-# id, then ask questions answered from its scanned content via the LLM service.
-app.include_router(documents.router)
 
 # Chatbot LLM + voice surface (/api/chat, /api/translate, /api/voice/*, /v1/*),
 # reverse-proxied to the LLM service with the gateway's API-key management.
