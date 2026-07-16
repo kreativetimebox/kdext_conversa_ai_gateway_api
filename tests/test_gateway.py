@@ -199,7 +199,14 @@ def test_text_to_speech_proxies_to_engine(client, db_session, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["audio_url"] == "/audio/tts/1.wav"
+    # In local mode the audio_url is the /audio path plus a short-lived signed
+    # token (an unguessable, expiring credential) rather than the bare,
+    # enumerable path — so assert on the path and that the token params exist.
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(response.json()["audio_url"])
+    assert parsed.path == "/audio/tts/1.wav"
+    token_params = parse_qs(parsed.query)
+    assert "exp" in token_params and "token" in token_params
     assert calls == [{"text": "Hello", "voice": "en-US-female-1", "format": "wav"}]
 
     # Verify user with OTP

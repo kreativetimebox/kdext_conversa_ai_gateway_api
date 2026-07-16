@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.models.user import User
 from app.models.stt import SpeechToText
 from app.services.stt_service import transcribe
-from app.storage.audio_store import save_audio
+from app.storage.audio_store import save_audio, presign_audio_url
 from app.services.usage import increment_success, increment_failure
 from app.services.rate_limiter import check_rate_limit
 
@@ -150,7 +150,9 @@ async def speech_to_text(file: UploadFile = File(...),
         response = {
             "request_id": request_id,
             "detail": job.transcript,
-            "audio_url": audio_url,
+            # Client-facing URL is presigned; the DB/SQS copies stay relative so
+            # the worker's download_audio() can still resolve them as S3 keys.
+            "audio_url": presign_audio_url(audio_url),
             "processing_time": job.processing_time,
             "current_time": job.created_at,
             "detected_language": job.detected_language,

@@ -31,6 +31,16 @@ def _get_client():
     return _sqs_client
 
 
+def warm_client() -> None:
+    """Build the SQS client ahead of first use.
+
+    boto3 client construction (credential/endpoint resolution + first TLS
+    handshake to a possibly cross-region queue) is otherwise paid on the first
+    enqueue, adding seconds to that request. Called from the app startup hook.
+    """
+    _get_client()
+
+
 def send_job(queue_url: str, job_id: int, job_type: str, payload: dict) -> str:
     """Send a job message to the specified SQS queue.
 

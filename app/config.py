@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = None
     aws_s3_bucket: str | None = None
     aws_s3_region: str = "us-east-1"
+    # Generated audio is served via a short-lived, unguessable URL minted only
+    # for the authenticated job owner (presigned S3 URL in S3 mode, HMAC-signed
+    # /audio path in local mode). The browser fetches it immediately after the
+    # job completes, so a short TTL is enough and limits the bearer-URL window.
+    # 600s leaves margin for long clips or pause/seek after load (a range
+    # request past expiry would 403).
+    audio_url_ttl_seconds: int = 600
 
     # Amazon SQS — async job queue (voice-worker microservice)
     use_async_queue: bool = False

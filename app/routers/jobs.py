@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.models.stt import SpeechToText
 from app.schemas.jobs import JobStatusResponse
+from app.storage.audio_store import presign_audio_url
 
 router = APIRouter(tags=["jobs"])
 
@@ -51,12 +52,18 @@ def get_job_status(job_id: int,
             .first()
         )
     if tts_job:
+        # Owner already verified via the user_id filter above; mint a short-lived
+        # unguessable URL rather than exposing the raw enumerable storage path.
         return JobStatusResponse(
             job_id=tts_job.request_id,
             job_type="tts",
             status=tts_job.status,
             queue_position=_live_queue_position(db, TextToSpeech, tts_job),
-            audio_url=tts_job.audio_url,
+            audio_url=presign_audio_url(tts_job.audio_url),
+            download_url=presign_audio_url(
+                tts_job.audio_url,
+                download_name=f"conversa_tts_{tts_job.request_id}.{tts_job.format or 'wav'}",
+            ),
             detail=tts_job.input_text,
             processing_time=tts_job.processing_time,
             error=tts_job.error_message,
@@ -80,7 +87,7 @@ def get_job_status(job_id: int,
             job_type="stt",
             status=stt_job.status,
             queue_position=_live_queue_position(db, SpeechToText, stt_job),
-            audio_url=stt_job.audio_url,
+            audio_url=presign_audio_url(stt_job.audio_url),
             detail=stt_job.transcript,
             processing_time=stt_job.processing_time,
             error=stt_job.error_message,

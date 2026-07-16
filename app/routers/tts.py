@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import logging
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,13 +11,20 @@ from app.models.user import User
 from app.models.tts import TextToSpeech
 from app.schemas.tts import TTSRequest
 from app.services.tts_service import synthesize, SPEAKERS, get_voice_info
-from app.storage.audio_store import save_audio
+from app.storage.audio_store import save_audio, presign_audio_url
 from app.services.usage import increment_success, increment_failure
 from app.services.rate_limiter import check_rate_limit
 from app.config import get_settings
 
 router = APIRouter(tags=["tts"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+def _compute_text_hash(text: str, voice: str, fmt: str) -> str:
+    """Stable cache key for a synthesis request: sha256 of text|voice|format."""
+    raw = f"{text}|{voice}|{fmt}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 @router.get("/voices")
@@ -48,8 +57,47 @@ async def list_voices():
 async def text_to_speech(body: TTSRequest,
                          user: User = Depends(verify_api_key_cached),
                          db: Session = Depends(get_db)):
+    # Per-stage timing so the enqueue latency (previously opaque in the browser)
+    # can be split server-side: rate-limit vs cache-lookup vs DB insert vs SQS.
+    _t0 = time.perf_counter()
+
     # Rate-limit before creating any job row — applies to sync AND async mode.
     check_rate_limit(user.user_id, "tts", db)
+    _t_ratelimit = time.perf_counter()
+
+    # ── Cache: identical (text, voice, format) already synthesized? ──
+    # Output is deterministic for a given (text, voice, format), so a prior
+    # completed clip is reusable across users. A hit skips the queue, the worker,
+    # and model inference entirely — just mint a fresh URL for this requester.
+    text_hash = _compute_text_hash(body.text, body.voice, body.format)
+    cached = (
+        db.query(TextToSpeech)
+        .filter(
+            TextToSpeech.text_hash == text_hash,
+            TextToSpeech.status == "completed",
+            TextToSpeech.audio_url.isnot(None),
+        )
+        .order_by(TextToSpeech.request_id.desc())
+        .first()
+    )
+    if cached:
+        logger.info(
+            "tts enqueue CACHE HIT | ratelimit=%.3fs cache_lookup=%.3fs total=%.3fs",
+            _t_ratelimit - _t0,
+            time.perf_counter() - _t_ratelimit,
+            time.perf_counter() - _t0,
+        )
+        return {
+            "job_id": cached.request_id,
+            "status": "completed",
+            "audio_url": presign_audio_url(cached.audio_url),
+            "download_url": presign_audio_url(
+                cached.audio_url,
+                download_name=f"conversa_tts_{cached.request_id}.{cached.format or 'wav'}",
+            ),
+            "message": "Served from cache.",
+        }
+    _t_cache = time.perf_counter()
 
     # ── Async mode: queue the job and return immediately ──
     if settings.use_async_queue:
@@ -58,9 +106,11 @@ async def text_to_speech(body: TTSRequest,
         # Compute queue position (number of currently queued jobs + 1)
         queue_pos = db.query(TextToSpeech).filter(TextToSpeech.status == "queued").count() + 1
         lang, model = get_voice_info(body.voice)
+        _t_count = time.perf_counter()
 
         job = TextToSpeech(
             input_text=body.text,
+            text_hash=text_hash,
             user_id=user.user_id,
             status="queued",
             voice=body.voice,
@@ -76,6 +126,7 @@ async def text_to_speech(body: TTSRequest,
         db.flush()
         job_id = job.request_id
         db.commit()
+        _t_insert = time.perf_counter()
 
         try:
             # boto3 is sync — run in a thread so the event loop stays free.
@@ -104,6 +155,17 @@ async def text_to_speech(body: TTSRequest,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to enqueue job: {str(exc)}"
             )
+        logger.info(
+            "tts enqueue OK job_id=%d | ratelimit=%.3fs cache_lookup=%.3fs "
+            "queue_count=%.3fs db_insert=%.3fs sqs_send=%.3fs total=%.3fs",
+            job_id,
+            _t_ratelimit - _t0,
+            _t_cache - _t_ratelimit,
+            _t_count - _t_cache,
+            _t_insert - _t_count,
+            time.perf_counter() - _t_insert,
+            time.perf_counter() - _t0,
+        )
         return {
             "job_id": job_id,
             "status": "queued",
@@ -114,6 +176,7 @@ async def text_to_speech(body: TTSRequest,
     lang, model = get_voice_info(body.voice)
     job = TextToSpeech(
         input_text=body.text,
+        text_hash=text_hash,
         user_id=user.user_id,
         status="processing",
         voice=body.voice,
@@ -146,7 +209,11 @@ async def text_to_speech(body: TTSRequest,
         # each access would trigger a refresh round-trip to the remote DB.
         response = {
             "request_id": request_id,
-            "audio_url": audio_url,
+            "audio_url": presign_audio_url(audio_url),
+            "download_url": presign_audio_url(
+                audio_url,
+                download_name=f"conversa_tts_{request_id}.{body.format or 'wav'}",
+            ),
             "detail": job.input_text,
             "processing_time": job.processing_time,
             "current_time": job.created_at,

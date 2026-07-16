@@ -7,6 +7,22 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Shared, pooled HTTP client for gateway → engine calls. Building a fresh client
+# per request (the old `async with httpx.AsyncClient()`) meant a new TCP + TLS
+# handshake every synthesis; a keep-alive pool reuses connections. Mirrors the
+# worker's shared client in kdext_conversa_ai_sqs/worker/http_client.py.
+_engine_client: httpx.AsyncClient | None = None
+
+
+def _get_engine_client() -> httpx.AsyncClient:
+    global _engine_client
+    if _engine_client is None:
+        _engine_client = httpx.AsyncClient(
+            timeout=settings.engine_timeout_seconds,
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        )
+    return _engine_client
+
 # ---------------------------------------------------------------------------
 # Language routing map
 # ---------------------------------------------------------------------------
@@ -265,18 +281,18 @@ async def synthesize(text: str, voice: str, format: str) -> bytes:
         f"resolved_voice={parler_voice!r}..."
     )
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{settings.tts_engine_url.rstrip('/')}{settings.tts_engine_path}",
-            json={
-                "text": text,
-                "language": lang,
-                "voice": parler_voice,
-            },
-            timeout=settings.engine_timeout_seconds,
-        )
-        resp.raise_for_status()
-        return resp.content
+    client = _get_engine_client()
+    resp = await client.post(
+        f"{settings.tts_engine_url.rstrip('/')}{settings.tts_engine_path}",
+        json={
+            "text": text,
+            "language": lang,
+            "voice": parler_voice,
+        },
+        timeout=settings.engine_timeout_seconds,
+    )
+    resp.raise_for_status()
+    return resp.content
 
 
 def get_voice_info(voice: str) -> tuple[str, str]:

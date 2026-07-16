@@ -13,6 +13,9 @@ class TextToSpeech(Base):
     audio_url = Column(String(512), nullable=True)      # generated audio URL/path
     audio_bytes = Column(LargeBinary, nullable=True)    # raw generated audio bytes
     input_text = Column(Text, nullable=False)           # input text
+    # sha256 of (text|voice|format); indexed so identical requests can reuse a
+    # previously synthesized clip instead of re-running the model.
+    text_hash = Column(String(64), nullable=True, index=True)
     user_id = Column(
         Integer,
         ForeignKey("users.user_id", ondelete="CASCADE"),

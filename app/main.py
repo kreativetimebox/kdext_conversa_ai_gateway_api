@@ -31,6 +31,23 @@ if not settings.use_s3_storage:
 
 app = FastAPI(title="Voice Gateway API", version="1.0.0")
 
+
+@app.on_event("startup")
+async def _warm_aws_clients() -> None:
+    """Pre-build cross-region AWS clients so the first request doesn't pay cold-start."""
+    if settings.use_async_queue:
+        try:
+            from app.services.sqs_client import warm_client
+            warm_client()
+        except Exception as exc:  # never block startup on a warmup failure
+            logger.warning("SQS client warmup failed: %s", exc)
+    if settings.use_s3_storage:
+        try:
+            from app.storage.audio_store import warm_s3_client
+            warm_s3_client()
+        except Exception as exc:
+            logger.warning("S3 client warmup failed: %s", exc)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -56,57 +73,54 @@ async def limit_upload_size(request: Request, call_next):
                     pass
     return await call_next(request)
 
-from fastapi import HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import HTTPException, Query
+from fastapi.responses import FileResponse
+from app.storage.audio_store import verify_local_audio_token
 
 @app.get("/audio/{path:path}")
-async def get_audio_file(path: str):
-    """Retrieve and stream audio file from local filesystem or private S3 bucket."""
-    if not settings.use_s3_storage:
-        # Serve local files
-        local_path = os.path.abspath(os.path.join(settings.audio_storage_dir, path))
-        storage_root = os.path.abspath(settings.audio_storage_dir)
-        
-        # Security check: prevent directory traversal
-        if os.path.commonpath([storage_root, local_path]) != storage_root:
-            raise HTTPException(status_code=403, detail="Access denied")
-            
-        if not os.path.exists(local_path):
-            raise HTTPException(status_code=404, detail="Audio file not found")
-            
-        content_type = "audio/wav"
-        if path.endswith(".mp3"):
-            content_type = "audio/mpeg"
-        return FileResponse(local_path, media_type=content_type)
+async def get_audio_file(
+    path: str,
+    exp: int | None = Query(default=None),
+    token: str | None = Query(default=None),
+    dl: str | None = Query(default=None),
+):
+    """Serve a generated audio file from local disk (development only).
 
-    # Serve from S3 (Gateway reverse-proxies S3)
-    bucket = settings.aws_s3_bucket
-    region = settings.aws_s3_region
-    try:
-        import boto3
-        # Create boto3 client
-        s3 = boto3.client(
-            "s3",
-            region_name=region,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
-        # Fetch object stream
-        response = s3.get_object(Bucket=bucket, Key=path)
-        content_type = response.get("ContentType", "audio/wav")
-        
-        # Stream it back
-        return StreamingResponse(
-            response["Body"],
-            media_type=content_type,
-            headers={
-                "Content-Length": str(response.get("ContentLength", "")),
-                "Accept-Ranges": "bytes",
-            }
-        )
-    except Exception as exc:
-        logger.error("Failed to stream S3 audio path %s from bucket %s: %s", path, bucket, exc)
-        raise HTTPException(status_code=404, detail="Audio file not found or inaccessible")
+    Access requires a valid short-lived signed token, minted per job for the
+    authenticated owner by ``presign_audio_url`` — without it, the sequential
+    request ids would let anyone enumerate other users' audio (an IDOR).
+
+    In S3 mode this route is disabled: clients receive a presigned S3 URL from
+    the job-status response and fetch audio directly from the private bucket, so
+    the gateway is never in the media path.
+    """
+    if settings.use_s3_storage:
+        # Audio is served via presigned S3 URLs; this proxy route is intentionally
+        # gone in S3 mode so it can't be used to enumerate objects.
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    # Local mode: enforce the signed token before touching the filesystem.
+    if exp is None or not token or not verify_local_audio_token(path, exp, token):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    local_path = os.path.abspath(os.path.join(settings.audio_storage_dir, path))
+    storage_root = os.path.abspath(settings.audio_storage_dir)
+
+    # Security check: prevent directory traversal
+    if os.path.commonpath([storage_root, local_path]) != storage_root:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not os.path.exists(local_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    content_type = "audio/wav"
+    if path.endswith(".mp3"):
+        content_type = "audio/mpeg"
+    # dl → force a download with a filename (matches the S3 Content-Disposition
+    # path); omitted → inline playback.
+    if dl:
+        return FileResponse(local_path, media_type=content_type, filename=dl)
+    return FileResponse(local_path, media_type=content_type)
 
 app.include_router(auth.router)
 app.include_router(profile.router)

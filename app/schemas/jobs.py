@@ -22,6 +22,9 @@ class JobStatusResponse(BaseModel):
     status: str             # "queued" | "processing" | "completed" | "failed"
     queue_position: int | None = None
     audio_url: str | None = None
+    # Same audio, but presigned to download-with-filename (Content-Disposition)
+    # instead of playing inline. Lets the client save the file without a new tab.
+    download_url: str | None = None
     detail: str | None = None
     processing_time: float | None = None
     error: str | None = None
