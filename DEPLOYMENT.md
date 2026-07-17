@@ -146,7 +146,7 @@ ALLOWED_ORIGINS=https://yourfrontend.com,https://www.yourfrontend.com
 # ── TTS Engine ────────────────────────────────────────────────────────────────
 TTS_ENGINE_URL=http://185.14.252.20:8000
 TTS_ENGINE_PATH=/v1/tts
-TTS_ALLOWED_FORMATS=wav
+TTS_ALLOWED_FORMATS=wav,mp3
 MAX_TTS_TEXT_CHARS=500
 
 # ── STT Engine ────────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ ENGINE_TIMEOUT_SECONDS=60
 
 # ── Audio Storage ─────────────────────────────────────────────────────────────
 MAX_AUDIO_UPLOAD_BYTES=5242880
-ALLOWED_AUDIO_CONTENT_TYPES=audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/webm,audio/ogg
+ALLOWED_AUDIO_CONTENT_TYPES=audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/m4a,audio/x-m4a,audio/webm,audio/ogg,audio/flac
 
 USE_S3_STORAGE=true
 AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxx
@@ -506,7 +506,7 @@ ALLOWED_ORIGINS=https://yourfrontend.com
 # ── Voice Engines ─────────────────────────────────────────────────────────────
 TTS_ENGINE_URL=http://185.14.252.20:8000
 TTS_ENGINE_PATH=/v1/tts
-TTS_ALLOWED_FORMATS=wav
+TTS_ALLOWED_FORMATS=wav,mp3
 MAX_TTS_TEXT_CHARS=500
 STT_ENGINE_URL=http://185.14.252.20:8002
 STT_ENGINE_PATH=/v1/stt
@@ -514,7 +514,7 @@ ENGINE_TIMEOUT_SECONDS=60
 
 # ── Audio Storage (S3) ────────────────────────────────────────────────────────
 MAX_AUDIO_UPLOAD_BYTES=5242880
-ALLOWED_AUDIO_CONTENT_TYPES=audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/webm,audio/ogg
+ALLOWED_AUDIO_CONTENT_TYPES=audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/m4a,audio/x-m4a,audio/webm,audio/ogg,audio/flac
 USE_S3_STORAGE=true
 AWS_ACCESS_KEY_ID=AKIAxxxxxxxxxxxxxxxx
 AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

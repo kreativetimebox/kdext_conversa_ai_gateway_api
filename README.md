@@ -260,7 +260,7 @@ Default gateway config:
 ```env
 TTS_ENGINE_URL=http://localhost:8000
 TTS_ENGINE_PATH=/v1/tts
-TTS_ALLOWED_FORMATS=wav
+TTS_ALLOWED_FORMATS=wav,mp3
 MAX_TTS_TEXT_CHARS=500
 ```
 
@@ -410,7 +410,7 @@ Counters:
 | `ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:8001` | Use real frontend domains |
 | `TTS_ENGINE_URL` | `http://localhost:8000` | Internal TTS service URL |
 | `TTS_ENGINE_PATH` | `/v1/tts` | Keep aligned with TTS service |
-| `TTS_ALLOWED_FORMATS` | `wav` | Current TTS service returns WAV |
+| `TTS_ALLOWED_FORMATS` | `wav,mp3` | Output formats the TTS engine can return |
 | `MAX_TTS_TEXT_CHARS` | `500` | Match TTS service limit |
 | `STT_ENGINE_URL` | empty | Set real STT service URL |
 | `STT_ENGINE_PATH` | `/v1/stt` | Keep aligned with STT service |

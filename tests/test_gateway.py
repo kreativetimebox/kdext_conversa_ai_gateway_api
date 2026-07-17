@@ -184,9 +184,10 @@ def test_text_to_speech_proxies_to_engine(client, db_session, monkeypatch):
         calls.append({"text": text, "voice": voice, "format": format})
         return b"fake wav bytes"
 
-    def fake_save_audio(relative_path: str, data: bytes) -> str:
+    def fake_save_audio(relative_path: str, data: bytes, content_type: str = "audio/wav") -> str:
         assert relative_path == "tts/1.wav"
         assert data == b"fake wav bytes"
+        assert content_type == "audio/wav"
         return "/audio/tts/1.wav"
 
     monkeypatch.setattr("app.routers.tts.synthesize", fake_synthesize)
@@ -240,13 +241,45 @@ def test_text_to_speech_rejects_unsupported_format(client):
     )
     api_key = signup_response.json()["api_key"]
 
+    # "ogg" is not in TTS_ALLOWED_FORMATS (wav, mp3) — must be rejected.
+    response = client.post(
+        "/text-to-speech",
+        json={"text": "Hello", "voice": "en-US-female-1", "format": "ogg"},
+        headers={"X-API-Key": api_key},
+    )
+
+    assert response.status_code == 422
+
+
+def test_text_to_speech_accepts_mp3_format(client, monkeypatch):
+    signup_response = client.post(
+        "/signup",
+        json={"email": "mp3@example.com", "password": "securepassword123"},
+    )
+    api_key = signup_response.json()["api_key"]
+
+    async def fake_synthesize(text: str, voice: str, format: str) -> bytes:
+        assert format == "mp3"
+        return b"fake mp3 bytes"
+
+    def fake_save_audio(relative_path: str, data: bytes, content_type: str = "audio/wav") -> str:
+        # mp3 output must be stored as .mp3 with the canonical audio/mpeg type.
+        assert relative_path == "tts/1.mp3"
+        assert content_type == "audio/mpeg"
+        return "/audio/tts/1.mp3"
+
+    monkeypatch.setattr("app.routers.tts.synthesize", fake_synthesize)
+    monkeypatch.setattr("app.routers.tts.save_audio", fake_save_audio)
+
     response = client.post(
         "/text-to-speech",
         json={"text": "Hello", "voice": "en-US-female-1", "format": "mp3"},
         headers={"X-API-Key": api_key},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    from urllib.parse import urlparse
+    assert urlparse(response.json()["audio_url"]).path == "/audio/tts/1.mp3"
 
 
 @pytest.mark.anyio
@@ -275,7 +308,7 @@ async def test_tts_service_payload_matches_tts_microservice(monkeypatch):
     assert audio == b"RIFFfake wav"
     assert len(requests) == 1
     assert requests[0].url.path == "/v1/tts"
-    assert requests[0].read() == b'{"text":"Hello","language":"en","voice":"vivian"}'
+    assert requests[0].read() == b'{"text":"Hello","language":"en","voice":"vivian","format":"wav"}'
 
 
 def test_speech_to_text_passes_language_to_service(client, monkeypatch):

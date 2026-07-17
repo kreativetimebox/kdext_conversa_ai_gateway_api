@@ -288,6 +288,7 @@ async def synthesize(text: str, voice: str, format: str) -> bytes:
             "text": text,
             "language": lang,
             "voice": parler_voice,
+            "format": format,
         },
         timeout=settings.engine_timeout_seconds,
     )

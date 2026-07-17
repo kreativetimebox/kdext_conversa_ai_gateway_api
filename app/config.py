@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # Voice engines
     tts_engine_url: str = "http://localhost:8000"
     tts_engine_path: str = "/v1/tts"
-    tts_allowed_formats: list[str] = ["wav"]
+    tts_allowed_formats: list[str] = ["wav", "mp3"]
     max_tts_text_chars: int = 500
     stt_engine_url: str | None = None
     stt_engine_path: str = "/v1/stt"
@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # Audio storage — local fallback
     audio_storage_dir: str = "audio_storage"
     max_audio_upload_bytes: int = 25 * 1024 * 1024
+    # Keep this aligned with the STT engine's MIME_TO_FORMAT
+    # (kdext_conversa_ai_stt/app/utils/webm_to_wav.py) — the content_type is
+    # forwarded to the engine verbatim, so a type allowed here must be accepted
+    # there too.
     allowed_audio_content_types: list[str] = [
         "audio/wav",
         "audio/wave",
@@ -79,9 +83,11 @@ class Settings(BaseSettings):
         "audio/mpeg",
         "audio/mp3",
         "audio/mp4",
+        "audio/m4a",
         "audio/x-m4a",
         "audio/webm",
         "audio/ogg",
+        "audio/flac",
     ]
     # Email / OTP
     smtp_host: str = "smtp.gmail.com"

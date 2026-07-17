@@ -27,6 +27,11 @@ def _compute_text_hash(text: str, voice: str, fmt: str) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _content_type_for_format(fmt: str) -> str:
+    """Map an audio format to its canonical MIME type for storage/serving."""
+    return "audio/mpeg" if fmt == "mp3" else "audio/wav"
+
+
 @router.get("/voices")
 async def list_voices():
     """Return all available TTS speaker voices.
@@ -197,7 +202,10 @@ async def text_to_speech(body: TTSRequest,
         # generated audio is served from S3 via audio_url; storing the bytes in
         # the cross-region DB as well was pure added latency, so it's skipped.
         audio_url = await asyncio.to_thread(
-            save_audio, f"tts/{request_id}.{body.format}", audio_bytes
+            save_audio,
+            f"tts/{request_id}.{body.format}",
+            audio_bytes,
+            _content_type_for_format(body.format),
         )
 
         job.audio_url = audio_url
