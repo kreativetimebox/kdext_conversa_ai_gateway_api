@@ -19,6 +19,7 @@ immediately. Any new route the LLM service adds is proxied automatically.
 """
 
 import asyncio
+import json
 import logging
 
 import httpx
@@ -275,8 +276,6 @@ async def proxy_chat(
     db: Session = Depends(get_db),
 ):
     """Proxy /api/chat and save user + assistant messages to DB."""
-    import json as _json
-
     _enforce_rate_limit(user, "llm", db)
 
     # Optional gateway-only header: continue an existing conversation instead
@@ -296,7 +295,7 @@ async def proxy_chat(
     # Extract user message from request body
     user_content = ""
     try:
-        body_data = _json.loads(body_bytes)
+        body_data = json.loads(body_bytes)
         messages = body_data.get("messages", [])
         user_msgs = [m for m in messages if m.get("role") == "user"]
         if user_msgs:
@@ -327,15 +326,33 @@ async def proxy_chat(
             detail=f"LLM service unreachable: {exc}",
         )
 
-    # Collect response to extract assistant content for DB saving
+    # Collect response to extract assistant content for DB saving. Cap the
+    # buffer: past this size we stop retaining chunks (streaming to the client
+    # is unaffected) and skip the DB save, so a burst of very long generations
+    # can't balloon gateway memory. 2 MB of SSE text is far longer than any
+    # normal chat turn we'd want to persist.
+    _MAX_SAVE_BUFFER = 2 * 1024 * 1024
     response_chunks = []
+    buffered_bytes = 0
+    buffer_overflow = False
 
     async def stream_and_save():
+        nonlocal buffered_bytes, buffer_overflow
         # finally ensures the pooled connection is released even if the client
         # disconnects mid-stream; the save below only runs on full completion.
         try:
             async for chunk in upstream.aiter_raw():
-                response_chunks.append(chunk)
+                if not buffer_overflow:
+                    buffered_bytes += len(chunk)
+                    if buffered_bytes > _MAX_SAVE_BUFFER:
+                        buffer_overflow = True
+                        response_chunks.clear()
+                        logger.warning(
+                            "chat_save_skipped: response exceeded %d bytes",
+                            _MAX_SAVE_BUFFER,
+                        )
+                    else:
+                        response_chunks.append(chunk)
                 yield chunk
         finally:
             await upstream.aclose()
@@ -344,14 +361,14 @@ async def proxy_chat(
         # NOTE: we use _save_chat_messages (which opens its own session)
         # because the request-scoped `db` is closed by FastAPI before this
         # generator finishes.
-        if user and user_content and not client_persists:
+        if user and user_content and not client_persists and not buffer_overflow:
             try:
                 full_text = b"".join(response_chunks).decode("utf-8", errors="ignore")
                 assistant_content = ""
 
                 # Try JSON parse first (non-streaming)
                 try:
-                    data = _json.loads(full_text)
+                    data = json.loads(full_text)
                     choices = data.get("choices", [])
                     if choices:
                         assistant_content = choices[0].get("message", {}).get("content", "")
@@ -364,7 +381,7 @@ async def proxy_chat(
                     for line in full_text.splitlines():
                         if line.startswith("data:") and "[DONE]" not in line:
                             try:
-                                d = _json.loads(line[5:].strip())
+                                d = json.loads(line[5:].strip())
                                 parts.append(d.get("content", ""))
                             except Exception:
                                 pass
@@ -554,8 +571,16 @@ async def ws_translate_proxy(websocket: WebSocket):
 
     async def client_to_upstream():
         while True:
-            data = await websocket.receive_text()
-            await upstream.send(data)
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            data = message.get("text")
+            if data is not None:
+                await upstream.send(data)
+            else:
+                binary = message.get("bytes")
+                if binary is not None:
+                    await upstream.send(binary)
 
     async def upstream_to_client():
         async for message in upstream:
@@ -633,7 +658,7 @@ async def ws_voice_translate(websocket: WebSocket):
             check_rate_limit_in_memory(user.user_id, "llm")
         except HTTPException as exc:
             await websocket.send_text(
-                f'{{"type":"error","message":"{exc.detail}"}}'
+                json.dumps({"type": "error", "message": exc.detail})
             )
             await websocket.close(code=1008, reason="Rate limit exceeded")
             return
@@ -684,7 +709,6 @@ async def ws_voice_translate(websocket: WebSocket):
         """POST a raw audio chunk to the STT service, forward transcript to upstream."""
         nonlocal seq, target_lang
         try:
-            import httpx as _httpx
             files = {"file": ("chunk.webm", audio_bytes, "audio/webm")}
             resp = await client.post(stt_url, files=files, headers=stt_headers, timeout=30)
             if not resp.is_success:
@@ -705,12 +729,12 @@ async def ws_voice_translate(websocket: WebSocket):
 
             # Echo transcript to client so the source panel updates
             await websocket.send_text(
-                f'{{"type":"transcript","text":{__import__("json").dumps(transcript)}}}'
+                json.dumps({"type": "transcript", "text": transcript})
             )
 
             # Forward to upstream translate WS
             seq += 1
-            payload = __import__("json").dumps({
+            payload = json.dumps({
                 "type": "translate",
                 "id": seq,
                 "text": transcript.strip(),
@@ -723,7 +747,10 @@ async def ws_voice_translate(websocket: WebSocket):
             logger.warning("voice-translate chunk error: %s", exc)
             try:
                 await websocket.send_text(
-                    f'{{"type":"error","message":"Chunk processing failed: {exc}"}}'
+                    json.dumps({
+                        "type": "error",
+                        "message": f"Chunk processing failed: {exc}",
+                    })
                 )
             except Exception:
                 pass
@@ -739,10 +766,24 @@ async def ws_voice_translate(websocket: WebSocket):
         except Exception:
             pass
 
+    # Audio chunks are drained by a SINGLE worker off this queue so STT runs
+    # serially: transcripts (and their `seq` ids) then stay in speech order,
+    # which fire-and-forget tasks could not guarantee. The queue is bounded so
+    # a slow STT engine sheds the oldest backlog instead of growing without
+    # limit — for live subtitles, fresh audio matters more than stale chunks.
+    audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=8)
+
+    async def _audio_worker() -> None:
+        while True:
+            chunk = await audio_queue.get()
+            try:
+                await _send_audio_chunk(chunk)
+            finally:
+                audio_queue.task_done()
+
     async def _pump_client_to_upstream() -> None:
         """Read mic audio chunks / control frames from the browser."""
         nonlocal target_lang
-        import json as _json
         while True:
             message = await websocket.receive()
             msg_type = message.get("type")
@@ -755,28 +796,38 @@ async def ws_voice_translate(websocket: WebSocket):
                 text = message.get("text")
 
                 if binary:
-                    # Raw audio chunk — send to STT → translate
-                    asyncio.create_task(_send_audio_chunk(binary))
+                    # Raw audio chunk — hand to the serial worker. If the queue
+                    # is full (STT falling behind), drop the oldest chunk to
+                    # keep latency bounded rather than blocking the receive loop.
+                    if audio_queue.full():
+                        try:
+                            audio_queue.get_nowait()
+                            audio_queue.task_done()
+                        except asyncio.QueueEmpty:
+                            pass
+                    audio_queue.put_nowait(binary)
 
                 elif text:
                     try:
-                        frame = _json.loads(text)
+                        frame = json.loads(text)
                     except ValueError:
                         continue
 
                     if frame.get("type") == "config":
                         target_lang = frame.get("target_lang", target_lang)
                     elif frame.get("type") == "ping":
-                        await websocket.send_text('{"type":"pong"}')
+                        await websocket.send_text(json.dumps({"type": "pong"}))
                     # Ignore other text frames
 
     pump_down = asyncio.create_task(_pump_upstream_to_client())
+    worker = asyncio.create_task(_audio_worker())
     try:
         await _pump_client_to_upstream()
     except Exception as exc:
         logger.info("ws_voice_translate client loop ended: %s", exc)
     finally:
         pump_down.cancel()
+        worker.cancel()
         try:
             await upstream.close()
         except Exception:
