@@ -14,8 +14,8 @@ concurrency:
 env:
   SSH_PORT: "22"
   # Update these according to your server configuration
-  SSH_USER: balabantaray-user
-  REMOTE_DIR: /home/balabantaray-user/voice-gateway
+  SSH_USER: ubuntu
+  REMOTE_DIR: /home/ubuntu/voice-gateway
   APP_PORT: "8001"
 
 jobs:
@@ -124,7 +124,7 @@ jobs:
           container_name="conversa-ai-gateway"
           image_name="kdext-conversa-ai-gateway:latest"
 
-          cd /home/balabantaray-user/voice-gateway
+          cd /home/ubuntu/voice-gateway
 
           echo "Building Docker image..."
           docker build -t "$image_name" .
@@ -137,7 +137,7 @@ jobs:
           docker run -d --name "$container_name" \
             --network host \
             --restart unless-stopped \
-            --env-file /home/balabantaray-user/voice-gateway/.env \
+            --env-file /home/ubuntu/voice-gateway/.env \
             "$image_name"
 
           echo "Running database migrations..."
